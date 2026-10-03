@@ -1,0 +1,585 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OUT_BRANCH
+  CS
+  SUPERVISOR
+  ADMIN
+}
+
+enum OpportunityStage {
+  NEW
+  NEED_CONFIRMED
+  FOLLOW_UP
+  HANDOVER
+  PROCESSING
+  READY
+  CLOSED_LOST
+}
+
+enum FollowUpStatus {
+  PLANNED
+  COMPLETED
+  CANCELLED
+}
+
+enum BatchType {
+  SINGLE
+  PAYROLL
+}
+
+enum HandoverStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  PROCESSING
+  ON_HOLD
+  ESCALATED
+  READY
+}
+
+enum ExceptionCategory {
+  OLD_PHONE_OTP
+  FACE_RECOGNITION
+  BLOCK_OR_ACTIVATION
+  OTHER_REAL_BLOCKER
+}
+
+enum ExceptionStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  RESOLVED
+}
+
+enum UsageStatus {
+  VERIFIED
+  REJECTED
+}
+
+enum VisitOutcome {
+  CONTACTED
+  NEED_CONFIRMED
+  FOLLOW_UP_REQUIRED
+  HANDOVER_READY
+  NO_ACTION
+}
+
+enum NotificationType {
+  PIC_ASSIGNMENT
+  HANDOVER_ASSIGNMENT
+  FOLLOW_UP_PRE_DUE
+  FOLLOW_UP_DUE
+  OVERDUE_DIGEST
+  SERVICE_ASSIGNMENT
+  SERVICE_STATUS
+  APPOINTMENT_ACTION_DUE
+  APPOINTMENT_PRE_DUE
+}
+
+enum OutboxJobType {
+  FOLLOW_UP_PRE_DUE
+  FOLLOW_UP_DUE
+  OVERDUE_DIGEST
+  APPOINTMENT_ACTION_DUE
+  APPOINTMENT_PRE_DUE
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  DRY_RUN
+  SMTP_ACCEPTED
+  FAILED
+  UNKNOWN
+  DISABLED
+  QUOTA_BLOCKED
+}
+
+enum ServiceCaseStatus {
+  CREATED
+  ASSIGNED
+  ACCEPTED
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  WAITING_SYSTEM
+  ESCALATED
+  HANDLED
+  VERIFIED
+  CLOSED
+  REOPENED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  NEEDS_SCHEDULING
+  PENDING_CONFIRMATION
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum CaseOrigin {
+  IN_BRANCH
+  OUT_BRANCH
+}
+
+model Branch {
+  id              String          @id @default(cuid())
+  code            String          @unique @db.VarChar(10)
+  name            String          @db.VarChar(120)
+  classCode       String          @db.VarChar(10)
+  timezone        String          @default("Asia/Jakarta") @db.VarChar(50)
+  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @db.Timestamptz(3)
+  users           User[]
+  prospects       Prospect[]
+  handoverBatches HandoverBatch[]
+  auditLogs       AuditLog[]
+  notifications   Notification[]
+  outboxJobs      OutboxJob[]
+  serviceCases    ServiceCase[]
+
+  @@index([code])
+}
+
+// Tabel inti Better Auth, diperluas dengan role dan cabang aplikasi.
+model User {
+  id                        String              @id @default(cuid())
+  name                      String
+  email                     String              @unique
+  emailVerified             Boolean             @default(false)
+  image                     String?
+  role                      Role                @default(OUT_BRANCH)
+  active                    Boolean             @default(true)
+  emailNotificationsEnabled Boolean             @default(true)
+  isTest                    Boolean             @default(false)
+  branchId                  String?
+  branch                    Branch?             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdAt                 DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime            @updatedAt @db.Timestamptz(3)
+  sessions                  Session[]
+  accounts                  Account[]
+  createdProspects          Prospect[]          @relation("ProspectCreator")
+  assignedProspects         Prospect[]          @relation("ProspectAssignee")
+  followUps                 FollowUp[]          @relation("FollowUpAssignee")
+  sentBatches               HandoverBatch[]     @relation("HandoverSender")
+  receivedBatches           HandoverBatch[]     @relation("HandoverReceiver")
+  exceptionCases            ExceptionCase[]     @relation("ExceptionAssignee")
+  usageVerifications        UsageVerification[] @relation("UsageRecorder")
+  auditLogs                 AuditLog[]          @relation("AuditActor")
+  visits                    Visit[]             @relation("VisitCreator")
+  notifications             Notification[]      @relation("NotificationRecipient")
+  outboxJobs                OutboxJob[]         @relation("OutboxRecipient")
+  emailDeliveries           EmailDelivery[]     @relation("EmailRecipient")
+  createdServiceCases       ServiceCase[]       @relation("ServiceCaseCreator")
+  assignedServiceCases      ServiceCase[]       @relation("ServiceCasePic")
+  acceptedServiceCases      ServiceCase[]       @relation("ServiceCaseAcceptor")
+  locationPhotos            LocationPhoto[]     @relation("LocationPhotoCreator")
+
+  @@index([branchId, role, active])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime @db.Timestamptz(3)
+  token     String   @unique
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([identifier])
+  @@index([expiresAt])
+}
+
+model Prospect {
+  id                 String              @id @default(cuid())
+  internalCode       String              @unique @db.VarChar(30)
+  cakraReference     String?             @unique @db.VarChar(80)
+  businessAlias      String              @db.VarChar(120)
+  need               String              @db.VarChar(500)
+  contactPic         String              @db.VarChar(100)
+  areaBlock          String?             @db.VarChar(100)
+  businessSector     String?             @db.VarChar(100)
+  addressHint        String?             @db.VarChar(220)
+  latitude           Decimal?            @db.Decimal(10, 7)
+  longitude          Decimal?            @db.Decimal(10, 7)
+  productNeeds       String[]            @default([])
+  locationLabel      String?             @db.VarChar(120)
+  locationUpdatedAt  DateTime?           @db.Timestamptz(3)
+  isTest             Boolean             @default(false)
+  testNamespace      String?             @db.VarChar(80)
+  opportunityStage   OpportunityStage    @default(NEW)
+  branchId           String
+  branch             Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  assignedToId       String
+  assignedTo         User                @relation("ProspectAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdById        String
+  createdBy          User                @relation("ProspectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  version            Int                 @default(1)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  followUps          FollowUp[]
+  handoverItems      HandoverItem[]
+  exceptionCases     ExceptionCase[]
+  usageVerifications UsageVerification[]
+  visits             Visit[]
+  serviceCases       ServiceCase[]
+  locationPhotos     LocationPhoto[]
+
+  @@index([branchId, isTest, opportunityStage, updatedAt])
+  @@index([assignedToId, opportunityStage])
+  @@index([businessAlias])
+  @@index([branchId, areaBlock, businessSector])
+  @@index([latitude, longitude])
+}
+
+model FollowUp {
+  id            String         @id @default(cuid())
+  prospectId    String
+  prospect      Prospect       @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  assignedToId  String
+  assignedTo    User           @relation("FollowUpAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  summary       String         @db.VarChar(500)
+  nextAction    String         @db.VarChar(300)
+  dueAt         DateTime       @db.Timestamptz(3)
+  status        FollowUpStatus @default(PLANNED)
+  completedAt   DateTime?      @db.Timestamptz(3)
+  version       Int            @default(1)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
+  notifications Notification[]
+  outboxJobs    OutboxJob[]
+
+  @@index([assignedToId, status, dueAt])
+  @@index([prospectId, createdAt])
+}
+
+model HandoverBatch {
+  id            String          @id @default(cuid())
+  batchNumber   String          @unique @db.VarChar(30)
+  type          BatchType       @default(SINGLE)
+  title         String          @db.VarChar(150)
+  status        HandoverStatus  @default(DRAFT)
+  branchId      String
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  senderId      String
+  sender        User            @relation("HandoverSender", fields: [senderId], references: [id], onDelete: Restrict)
+  receiverId    String?
+  receiver      User?           @relation("HandoverReceiver", fields: [receiverId], references: [id], onDelete: Restrict)
+  submittedAt   DateTime?       @db.Timestamptz(3)
+  acceptedAt    DateTime?       @db.Timestamptz(3)
+  readyAt       DateTime?       @db.Timestamptz(3)
+  version       Int             @default(1)
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime        @updatedAt @db.Timestamptz(3)
+  items         HandoverItem[]
+  exceptions    ExceptionCase[]
+  notifications Notification[]
+
+  @@index([branchId, status, updatedAt])
+  @@index([receiverId, status])
+  @@index([senderId, status])
+}
+
+model HandoverItem {
+  id         String        @id @default(cuid())
+  batchId    String
+  batch      HandoverBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  prospectId String        @unique
+  prospect   Prospect      @relation(fields: [prospectId], references: [id], onDelete: Restrict)
+  note       String?       @db.VarChar(500)
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@unique([batchId, prospectId])
+}
+
+model ExceptionCase {
+  id           String            @id @default(cuid())
+  batchId      String
+  batch        HandoverBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  prospectId   String?
+  prospect     Prospect?         @relation(fields: [prospectId], references: [id], onDelete: Restrict)
+  category     ExceptionCategory
+  title        String            @db.VarChar(150)
+  detail       String            @db.VarChar(700)
+  status       ExceptionStatus   @default(OPEN)
+  assignedToId String?
+  assignedTo   User?             @relation("ExceptionAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  resolvedAt   DateTime?         @db.Timestamptz(3)
+  version      Int               @default(1)
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([batchId, status])
+  @@index([prospectId])
+  @@index([assignedToId, status])
+}
+
+model UsageVerification {
+  id                String      @id @default(cuid())
+  prospectId        String
+  prospect          Prospect    @relation(fields: [prospectId], references: [id], onDelete: Restrict)
+  status            UsageStatus @default(VERIFIED)
+  usedAt            DateTime    @db.Timestamptz(3)
+  evidenceReference String      @unique @db.VarChar(150)
+  note              String?     @db.VarChar(500)
+  recordedById      String
+  recordedBy        User        @relation("UsageRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  createdAt         DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([prospectId, status, usedAt])
+  @@index([recordedById, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  branchId   String?
+  branch     Branch?  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  entityType String   @db.VarChar(60)
+  entityId   String   @db.VarChar(100)
+  action     String   @db.VarChar(80)
+  before     Json?
+  after      Json?
+  requestId  String?  @db.VarChar(100)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([branchId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model AppConfig {
+  key         String   @id @db.VarChar(100)
+  value       Json
+  description String?  @db.VarChar(300)
+  updatedById String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model Visit {
+  id              String       @id @default(cuid())
+  prospectId      String
+  prospect        Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  visitedAt       DateTime     @db.Timestamptz(3)
+  outcome         VisitOutcome
+  notes           String       @db.VarChar(700)
+  nextAction      String?      @db.VarChar(300)
+  nextActionDueAt DateTime?    @db.Timestamptz(3)
+  createdById     String
+  createdBy       User         @relation("VisitCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([prospectId, visitedAt])
+  @@index([createdById, visitedAt])
+}
+
+model Notification {
+  id            BigInt           @id @default(autoincrement())
+  recipientId   String
+  recipient     User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  branchId      String?
+  branch        Branch?          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  type          NotificationType
+  title         String           @db.VarChar(160)
+  message       String           @db.VarChar(500)
+  link          String           @db.VarChar(300)
+  dedupKey      String           @unique @db.VarChar(180)
+  isTest        Boolean          @default(false)
+  testNamespace String?          @db.VarChar(80)
+  followUpId    String?
+  followUp      FollowUp?        @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  handoverId    String?
+  handover      HandoverBatch?   @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  serviceCaseId String?
+  serviceCase   ServiceCase?     @relation(fields: [serviceCaseId], references: [id], onDelete: Cascade)
+  readAt        DateTime?        @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  deliveries    EmailDelivery[]
+
+  @@index([recipientId, isTest, id])
+  @@index([recipientId, readAt, createdAt])
+  @@index([branchId, createdAt])
+  @@index([serviceCaseId, id])
+}
+
+model OutboxJob {
+  id              String         @id @default(cuid())
+  type            OutboxJobType
+  status          OutboxStatus   @default(PENDING)
+  dedupKey        String         @unique @db.VarChar(180)
+  isTest          Boolean        @default(false)
+  testNamespace   String?        @db.VarChar(80)
+  recipientId     String
+  recipient       User           @relation("OutboxRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  branchId        String?
+  branch          Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  followUpId      String?
+  followUp        FollowUp?      @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  serviceCaseId   String?
+  serviceCase     ServiceCase?   @relation(fields: [serviceCaseId], references: [id], onDelete: Cascade)
+  scheduleVersion Int?
+  runAt           DateTime       @db.Timestamptz(3)
+  attempts        Int            @default(0)
+  maxAttempts     Int            @default(3)
+  lockedBy        String?        @db.VarChar(100)
+  lockedAt        DateTime?      @db.Timestamptz(3)
+  leaseExpiresAt  DateTime?      @db.Timestamptz(3)
+  payload         Json?
+  lastError       String?        @db.VarChar(1000)
+  completedAt     DateTime?      @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
+  emailDelivery   EmailDelivery?
+
+  @@index([status, runAt])
+  @@index([leaseExpiresAt, status])
+  @@index([recipientId, status, runAt])
+  @@index([followUpId, scheduleVersion])
+  @@index([serviceCaseId, scheduleVersion])
+}
+
+model EmailDelivery {
+  id             String              @id @default(cuid())
+  outboxJobId    String              @unique
+  outboxJob      OutboxJob           @relation(fields: [outboxJobId], references: [id], onDelete: Cascade)
+  notificationId BigInt?
+  notification   Notification?       @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  recipientId    String
+  recipient      User                @relation("EmailRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  status         EmailDeliveryStatus @default(QUEUED)
+  messageId      String?             @db.VarChar(300)
+  preview        String?             @db.Text
+  error          String?             @db.VarChar(1000)
+  acceptedAt     DateTime?           @db.Timestamptz(3)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(3)
+
+  @@index([recipientId, createdAt])
+  @@index([status, createdAt])
+  @@index([notificationId])
+}
+
+model ServiceCase {
+  id                String            @id @default(cuid())
+  code              String            @unique @db.VarChar(36)
+  branchId          String
+  branch            Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  prospectId        String
+  prospect          Prospect          @relation(fields: [prospectId], references: [id], onDelete: Restrict)
+  origin            CaseOrigin
+  status            ServiceCaseStatus @default(CREATED)
+  title             String            @db.VarChar(160)
+  description       String            @db.VarChar(700)
+  picId             String
+  pic               User              @relation("ServiceCasePic", fields: [picId], references: [id], onDelete: Restrict)
+  createdById       String
+  createdBy         User              @relation("ServiceCaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  acceptedById      String?
+  acceptedBy        User?             @relation("ServiceCaseAcceptor", fields: [acceptedById], references: [id], onDelete: Restrict)
+  nextAction        String            @db.VarChar(300)
+  dueAt             DateTime          @db.Timestamptz(3)
+  appointmentStatus AppointmentStatus @default(NEEDS_SCHEDULING)
+  appointmentAt     DateTime?         @db.Timestamptz(3)
+  acceptedAt        DateTime?         @db.Timestamptz(3)
+  handledAt         DateTime?         @db.Timestamptz(3)
+  verifiedAt        DateTime?         @db.Timestamptz(3)
+  closedAt          DateTime?         @db.Timestamptz(3)
+  reopenedAt        DateTime?         @db.Timestamptz(3)
+  waitReason        String?           @db.VarChar(500)
+  escalationReason  String?           @db.VarChar(500)
+  sourceSystem      String?           @db.VarChar(40)
+  sourceReference   String?           @db.VarChar(100)
+  isTest            Boolean           @default(false)
+  testNamespace     String?           @db.VarChar(80)
+  version           Int               @default(1)
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+  notifications     Notification[]
+  outboxJobs        OutboxJob[]
+
+  @@unique([sourceSystem, sourceReference])
+  @@index([branchId, isTest, status, dueAt])
+  @@index([picId, isTest, status, dueAt])
+  @@index([prospectId, createdAt])
+  @@index([appointmentStatus, appointmentAt])
+}
+
+model LocationPhoto {
+  id          String   @id @default(cuid())
+  prospectId  String
+  prospect    Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  storageKey  String   @unique @db.VarChar(180)
+  mimeType    String   @db.VarChar(60)
+  byteSize    Int
+  width       Int
+  height      Int
+  checksum    String   @db.VarChar(64)
+  createdById String
+  createdBy   User     @relation("LocationPhotoCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([prospectId, createdAt])
+}
+
+model WorkerHeartbeat {
+  id        String   @id @db.VarChar(100)
+  processId Int
+  hostname  String   @db.VarChar(160)
+  lastSeen  DateTime @db.Timestamptz(3)
+  startedAt DateTime @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}

@@ -1,26 +1,72 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f7fb;
+  --foreground: #13213c;
+  --navy: #092c60;
+  --navy-deep: #061e41;
+  --gold: #f8bc17;
+  --line: #dce4ef;
 }
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand: var(--navy);
+  --color-brand-deep: var(--navy-deep);
+  --color-accent: var(--gold);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--line);
 }
-
+html {
+  background: var(--background);
+}
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgb(248 188 23 / 0.42);
+  outline-offset: 2px;
+}
+.card {
+  @apply rounded-2xl border border-slate-200 bg-white shadow-[0_1px_3px_rgba(15,23,42,.04),0_12px_30px_rgba(15,23,42,.04)];
+}
+.field {
+  @apply h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-700;
+}
+.textarea {
+  @apply min-h-24 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-700;
+}
+.label {
+  @apply mb-1.5 block text-sm font-semibold text-slate-700;
+}
+.table-wrap {
+  @apply overflow-x-auto rounded-2xl border border-slate-200 bg-white;
+}
+.data-table {
+  @apply w-full min-w-[720px] text-left text-sm;
+}
+.data-table th {
+  @apply border-b bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500;
+}
+.data-table td {
+  @apply border-b border-slate-100 px-4 py-3 align-top;
+}
+.data-table tr:last-child td {
+  @apply border-b-0;
 }

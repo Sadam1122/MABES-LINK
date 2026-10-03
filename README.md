@@ -1,36 +1,122 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MABES LINK
 
-## Getting Started
+Aplikasi operasional internal KCP Mandiri Jakarta Mangga Besar (`11539`, `B.2`) untuk menghubungkan pekerjaan in-branch dan out-branch sampai layanan ditangani, diverifikasi, ditutup, dan penggunaan produk dicatat terpisah.
 
-First, run the development server:
+Implementasi ini disiapkan untuk deployment internal, tetapi **belum dinyatakan production-ready** sebelum approval keamanan/infrastruktur, verifikasi proses CAKRA, uji backup/restore, dan uji SMTP organisasi selesai. Jangan deploy ke internet publik atau memasukkan data nyata bank ke lingkungan development/test.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Batas fungsi
+
+- `ServiceCase` adalah alur kerja tunggal: dibuat → ditugaskan → diterima PIC → diproses → selesai ditangani → diverifikasi → ditutup. Menunggu nasabah/sistem, eskalasi, batal, dan reopen tersedia sebagai cabang tervalidasi.
+- Status janji `NEEDS_SCHEDULING` tidak dianggap sebagai janji terkonfirmasi. Email hanya mengingatkan PIC internal untuk membuat atau mengonfirmasi janji; aplikasi tidak mengirim undangan otomatis kepada calon nasabah.
+- Penyelesaian layanan tidak otomatis menjadi `UsageVerification`.
+- OTP nomor lama, face recognition, blokir/aktivasi, dan pengecualian CSM/Livin tetap mengikuti prosedur resmi; tidak ada bypass.
+- Tidak ada integrasi/scraping CAKRA, Kopra, core banking, Google Maps, geocoding, AI berbayar, WhatsApp blast, atau keputusan kredit otomatis.
+- Audit non-duplikasi dan keputusan yang belum terverifikasi ada di [CAKRA_NON_DUPLICATION.md](./CAKRA_NON_DUPLICATION.md).
+
+## Stack
+
+Next.js App Router 16.3.8, React 19.2.8, TypeScript 5, Tailwind CSS 4, Route Handlers Node.js, PostgreSQL 16, Prisma 7.10.0, Better Auth 1.7.7, Zod 4.6.5, Leaflet 1.9.4, Nodemailer 10.0.13, Sharp 0.35.5, dan Vitest 5.0.3. Lockfile npm disertakan.
+
+## Menjalankan lokal
+
+Prasyarat: Node.js 22+, npm 10+, dan Docker Desktop/Engine dengan Compose.
+
+```powershell
+Copy-Item .env.example .env
+# Ganti BETTER_AUTH_SECRET dengan nilai acak minimal 32 karakter.
+docker compose up -d postgres
+npm ci
+npm run db:generate
+npm run db:deploy
+$env:BOOTSTRAP_ADMIN_NAME='Administrator MABES LINK'
+$env:BOOTSTRAP_ADMIN_EMAIL='admin-internal@example.com'
+$env:BOOTSTRAP_ADMIN_PASSWORD='ganti-password-kuat-minimal-14-karakter'
+npm run bootstrap:admin
+Remove-Item Env:BOOTSTRAP_ADMIN_PASSWORD
+npm run dev:all
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run dev:all` menjalankan web dan worker sebagai proses terpisah. Untuk inspeksi terpisah gunakan `npm run dev` dan `npm run worker` pada dua terminal. Worker wajib selalu hidup agar reminder tetap berjalan saat browser ditutup.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Tidak ada seeder atau kredensial demo. `bootstrap:admin` hanya untuk ADMIN awal: perintah menolak menimpa email, menolak berjalan jika ADMIN operasional aktif sudah tersedia, dan tidak mencetak password. Setelah login, ADMIN mengelola akun melalui Pengaturan. Role hanya `ADMIN`, `CS`, `SUPERVISOR`, dan label UI `OUTBRANCH` (enum database stabil: `OUT_BRANCH`). Pembuatan referensi prospek manual nonaktif secara default (`ALLOW_MANUAL_REFERENCE_ENTRY=false`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deployment internal dengan Compose
 
-## Learn More
+```powershell
+Copy-Item .env.production.example .env.production
+# Isi seluruh rahasia, URL HTTPS internal, sender, dan konfigurasi yang disetujui.
+docker compose --env-file .env.production -f docker-compose.production.yml config
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+```
 
-To learn more about Next.js, take a look at the following resources:
+Compose menyediakan PostgreSQL tanpa port publik, migration one-shot, web dan worker dari image yang sama, health check, `restart: unless-stopped`, volume database, volume foto privat, dan volume backup. Reverse proxy internal harus menyediakan HTTPS. Jangan menaruh `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `APP_URL`, atau secret auth pada variabel `NEXT_PUBLIC_*`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Health web tersedia di `GET /api/health`; response membedakan database dan heartbeat worker. Health worker menggunakan `npm run worker:health`. Nilai `stale-or-not-started` berarti web/database hidup tetapi proses worker harus diperiksa.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Worker, outbox, dan notifikasi
 
-## Deploy on Vercel
+- Tick scheduler default setiap 60 detik (`WORKER_POLL_INTERVAL_MS`).
+- Job persisten diklaim atomik dengan `FOR UPDATE SKIP LOCKED`, lease dua menit, dedup key unik, retry terbatas/backoff, dan recovery setelah restart.
+- Worker memeriksa kembali versi jadwal, PIC, status pekerjaan, dan status janji sebelum membuat notifikasi/email. Reschedule, reassign, konfirmasi, selesai, atau batal membatalkan reminder lama.
+- SMTP dilakukan di luar transaksi claim. Timeout/socket ambigu menjadi `UNKNOWN` dan tidak diretry otomatis; SMTP accepted bukan bukti pesan sampai inbox.
+- SSE `/api/notifications/stream` membaca PostgreSQL setiap dua detik secara default, memakai cursor/`Last-Event-ID`, dan hanya mengirim record penerima login/cabangnya. UI memiliki polling cadangan lima detik.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## SMTP dan smoke test email
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Alamat smoke test dikunci pada `sadamalrasyid1@gmail.com`. Script tidak membuat task/account dan tidak mengirim ke nasabah. Untuk jalur operasional tanpa email keluar, pertahankan `SMTP_DRY_RUN=true`; worker menyimpan status/preview sebagai `DRY_RUN`.
+
+Pengiriman nyata hanya boleh dipicu secara eksplisit setelah kredensial resmi dan sender terverifikasi tersedia di environment server:
+
+```powershell
+$env:TEST_NOTIFICATION_EMAIL='sadamalrasyid1@gmail.com'
+$env:EMAIL_ENABLED='true'
+$env:SMTP_DRY_RUN='false'
+npm run smoke:test-email
+```
+
+Script memverifikasi koneksi/auth SMTP, recipient allowlist, kuota aplikasi, dan mengirim satu template aman. Tanpa opt-in/kredensial lengkap script berhenti sebelum pengiriman. Hasil membedakan `SMTP_ACCEPTED`, `FAILED`, `UNKNOWN`, atau `QUOTA_BLOCKED`; `SMTP_ACCEPTED` bukan bukti masuk inbox. TLS certificate verification tidak dinonaktifkan. Jalur reminder operasional tetap melalui outbox/worker dan menyimpan status/messageId. Brevo Free dan provider lain mempunyai kuota/persyaratan yang dapat berubah; periksa dokumentasi resmi [SMTP integration](https://developers.brevo.com/docs/smtp-integration), [pricing](https://help.brevo.com/hc/en-us/articles/208589409-About-Brevo-s-pricing-plans), dan [sender authentication](https://help.brevo.com/hc/en-us/articles/115000188150-Troubleshooting-Issues-with-Brevo-SMTP). Biaya web, worker yang selalu berjalan, database, storage, backup, dan observability terpisah dari kuota SMTP.
+
+## Peta, koordinat, dan foto privat
+
+- Leaflet memakai tile URL/atribusi yang dapat dikonfigurasi. Ikuti [OpenStreetMap Tile Usage Policy](https://operations.osmfoundation.org/policies/tiles/), jangan bulk download, dan gunakan provider yang diizinkan organisasi.
+- Overlay interaktif memakai referensi batas Kelurahan Mangga Besar dari [FeatureServer GIS Pemprov DKI](https://gis-dpmptsp.jakarta.go.id/arcgis/rest/services/Hosted/Batas_Administrasi_Kelurahan_DKI_Jakarta/FeatureServer/85), disederhanakan ke WGS84. Garis ini untuk filter/fokus peta dan bukan penetapan wilayah kerja cabang.
+- Koordinat disimpan sebagai `numeric(10,7)`, wajib berpasangan, dan `0` valid. Posisi perangkat hanya sementara; [browser geolocation](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation/getCurrentPosition) memerlukan secure context/izin dan tidak membentuk riwayat GPS.
+- [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started) location/direction hanya membawa koordinat dan tidak memakai API key. Jarak aplikasi adalah Haversine berlabel “Jarak garis lurus”, bukan jarak rute atau waktu tempuh.
+- Foto tempat opsional disimpan di `PRIVATE_STORAGE_PATH` pada volume persisten di luar webroot, mengikuti prinsip [OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html). Maksimum default tiga gambar, 5 MB/gambar, JPEG/PNG/WebP. Server memeriksa isi/decode/dimensi, re-encode WebP, menghapus metadata, memakai nama acak, dan melayani file melalui endpoint berotorisasi.
+
+## Alarm perangkat
+
+Dropdown Notifikasi menyediakan tombol **Aktifkan**. Setelah gesture dan izin pengguna, service worker menampilkan notifikasi sistem serta bunyi/getar untuk notifikasi baru dari SSE/polling. Fitur memerlukan HTTPS (localhost diterima browser) dan dukungan browser. Alarm perangkat aktif selama MABES LINK terbuka; ketika browser tertutup, sumber pengingat tetap worker/outbox dan email internal jika SMTP aktif. Tidak ada pelacakan kontinu atau push pihak ketiga.
+
+## Backup dan restore
+
+Backup harus mencakup PostgreSQL **dan** volume foto karena database hanya menyimpan metadata/storage key. Format database menggunakan `pg_dump -Fc`/`pg_restore`; lihat [dokumentasi backup PostgreSQL](https://www.postgresql.org/docs/16/backup.html).
+
+```powershell
+.\scripts\backup.ps1 -Name backup-20261003
+```
+
+Script menghasilkan `backup-20261003.dump` dan `backup-20261003-uploads.tar.gz` pada host. Salin hasil ke media internal terenkripsi dan uji checksum/retensi sesuai kebijakan organisasi.
+
+Restore bersifat destruktif terhadap database target dan memerlukan flag eksplisit:
+
+```powershell
+.\scripts\restore.ps1 -Name backup-20261003 -ConfirmRestore
+npm run db:deploy
+```
+
+Lakukan restore hanya pada maintenance window, setelah backup target diverifikasi. Jalankan health check, migration status, uji login/otorisasi, dan pemeriksaan file sebelum membuka layanan. Script sudah divalidasi sintaksnya, tetapi drill restore penuh belum dilakukan pada pemeriksaan terakhir.
+
+## Pemeriksaan
+
+```powershell
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm audit --omit=dev
+npx prisma migrate status
+npm run test:visual
+```
+
+Tes integrasi memerlukan PostgreSQL lokal yang sudah dimigrasi, membuat fixture terisolasi sendiri, lalu membersihkannya. Tidak memerlukan seed. Hasil aktual dan keterbatasan ada di [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).

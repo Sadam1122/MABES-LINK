@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: ${MABESLINK_ENV_FILE:-.env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  migrate:
+    image: mabeslink:internal
+    restart: "no"
+    env_file: ${MABESLINK_ENV_FILE:-.env.production}
+    command: ["npm", "run", "db:deploy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: mabeslink:internal
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_MAP_TILE_URL: ${NEXT_PUBLIC_MAP_TILE_URL:-https://tile.openstreetmap.org/{z}/{x}/{y}.png}
+        NEXT_PUBLIC_MAP_ATTRIBUTION: ${NEXT_PUBLIC_MAP_ATTRIBUTION:-OpenStreetMap contributors}
+        NEXT_PUBLIC_MAP_MAX_ZOOM: ${NEXT_PUBLIC_MAP_MAX_ZOOM:-19}
+    restart: unless-stopped
+    env_file: ${MABESLINK_ENV_FILE:-.env.production}
+    environment:
+      PRIVATE_STORAGE_PATH: /data/uploads
+    ports:
+      - "3000:3000"
+    volumes:
+      - private_uploads:/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    image: mabeslink:internal
+    restart: unless-stopped
+    env_file: ${MABESLINK_ENV_FILE:-.env.production}
+    environment:
+      PRIVATE_STORAGE_PATH: /data/uploads
+    command: ["npm", "run", "worker"]
+    volumes:
+      - private_uploads:/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "npm", "run", "worker:health"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  postgres_data:
+  private_uploads:
+  backups:
