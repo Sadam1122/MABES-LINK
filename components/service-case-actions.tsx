@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose } from "@/components/ui/dialog";
+import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
 import { isoToJakartaLocalInput, jakartaLocalToIso } from "@/lib/format";
 
@@ -27,8 +29,11 @@ export function ServiceCaseActions({
   canVerify: boolean;
 }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reasonFor, setReasonFor] = useState<string | null>(null);
+  const [reasonDirty, setReasonDirty] = useState(false);
 
   async function patch(data: Record<string, unknown>) {
     setBusy(true);
@@ -39,8 +44,11 @@ export function ServiceCaseActions({
         body: JSON.stringify({ version, ...data }),
       });
       router.refresh();
+      toast("Pekerjaan berhasil diperbarui.", "success");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Perubahan gagal.");
+      const message = cause instanceof Error ? cause.message : "Perubahan gagal.";
+      setError(message);
+      toast(message, "error");
     } finally {
       setBusy(false);
     }
@@ -65,20 +73,32 @@ export function ServiceCaseActions({
     REOPENED: [{ label: "Proses kembali", to: "IN_PROGRESS" }],
   };
 
-  async function transition(to: string) {
+  async function executeTransition(to: string, reason?: string) {
     const data: Record<string, unknown> = { status: to };
-    if (to === "WAITING_CUSTOMER" || to === "WAITING_SYSTEM") {
-      const reason = prompt("Catat alasan menunggu:");
-      if (!reason) return;
-      data.waitReason = reason;
-    }
-    if (to === "ESCALATED") {
-      const reason = prompt("Catat alasan eskalasi:");
-      if (!reason) return;
-      data.escalationReason = reason;
-    }
-    if (!confirm(`Ubah status menjadi ${to.replaceAll("_", " ")}?`)) return;
+    if (to === "WAITING_CUSTOMER" || to === "WAITING_SYSTEM") data.waitReason = reason;
+    if (to === "ESCALATED") data.escalationReason = reason;
+    if (!(await confirm({ title: "Ubah status pekerjaan?", description: `Status akan diubah menjadi ${to.replaceAll("_", " ")}.`, confirmLabel: "Ubah status" }))) return;
     await patch(data);
+  }
+
+  async function transition(to: string) {
+    if (["WAITING_CUSTOMER", "WAITING_SYSTEM", "ESCALATED"].includes(to)) {
+      setReasonDirty(false);
+      setReasonFor(to);
+      return;
+    }
+    await executeTransition(to);
+  }
+
+  async function submitReason(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!reasonFor) return;
+    const reason = String(new FormData(event.currentTarget).get("reason") ?? "").trim();
+    if (reason.length < 3) return;
+    const target = reasonFor;
+    setReasonDirty(false);
+    setReasonFor(null);
+    await executeTransition(target, reason);
   }
 
   async function schedule(event: FormEvent<HTMLFormElement>) {
@@ -191,6 +211,19 @@ export function ServiceCaseActions({
         </label>
         <Button disabled={busy}>{busy ? "Menyimpan…" : "Simpan jadwal"}</Button>
       </form>
+      <Dialog
+        open={Boolean(reasonFor)}
+        onClose={() => setReasonFor(null)}
+        title={reasonFor === "ESCALATED" ? "Alasan eskalasi" : "Alasan menunggu"}
+        description="Catatan ini masuk ke audit pekerjaan dan harus ringkas serta faktual."
+        dirty={reasonDirty}
+        busy={busy}
+        footer={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><DialogClose variant="outline">Batal</DialogClose><Button type="submit" form="case-reason-form">Lanjutkan</Button></div>}
+      >
+        <form id="case-reason-form" onSubmit={submitReason} onChange={() => setReasonDirty(true)}>
+          <label className="label">Alasan<textarea data-autofocus className="textarea mt-1" name="reason" minLength={3} maxLength={500} required /></label>
+        </form>
+      </Dialog>
     </div>
   );
 }

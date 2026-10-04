@@ -1,9 +1,9 @@
 "use client";
-import { ExceptionCategory, ExceptionStatus } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { Button } from "@/components/ui/button";
+import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
 
 export function ExceptionForm({
@@ -14,16 +14,12 @@ export function ExceptionForm({
   prospects: { id: string; businessAlias: string }[];
 }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (
-      !confirm(
-        "Catat subkasus ini sebagai kendala nyata yang memerlukan penanganan?",
-      )
-    )
-      return;
+    if (!(await confirm({ title: "Catat kendala nyata?", description: "Subkasus hanya digunakan untuk kondisi yang benar-benar memerlukan penanganan khusus.", confirmLabel: "Catat kendala" }))) return;
     setBusy(true);
     const form = new FormData(event.currentTarget);
     try {
@@ -38,6 +34,7 @@ export function ExceptionForm({
       });
       event.currentTarget.reset();
       router.refresh();
+      toast("Kendala berhasil dicatat.", "success");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal mencatat kendala.");
     } finally {
@@ -56,16 +53,16 @@ export function ExceptionForm({
         <div>
           <label className="label">Kategori</label>
           <select name="category" className="field" required>
-            <option value={ExceptionCategory.OLD_PHONE_OTP}>
+            <option value="OLD_PHONE_OTP">
               OTP nomor lama
             </option>
-            <option value={ExceptionCategory.FACE_RECOGNITION}>
+            <option value="FACE_RECOGNITION">
               Face recognition
             </option>
-            <option value={ExceptionCategory.BLOCK_OR_ACTIVATION}>
+            <option value="BLOCK_OR_ACTIVATION">
               Blokir / aktivasi
             </option>
-            <option value={ExceptionCategory.OTHER_REAL_BLOCKER}>
+            <option value="OTHER_REAL_BLOCKER">
               Kendala nyata lainnya
             </option>
           </select>
@@ -108,18 +105,20 @@ export function ResolveException({
   version: number;
 }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   async function run() {
-    if (!confirm("Konfirmasi kendala ini telah selesai ditangani?")) return;
+    if (!(await confirm({ title: "Selesaikan kendala?", description: "Konfirmasi bahwa penanganan resmi telah selesai dilakukan.", confirmLabel: "Tandai selesai" }))) return;
     setBusy(true);
     try {
       await clientApi(`/api/handovers/${batchId}/exceptions/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ version, status: ExceptionStatus.RESOLVED }),
+        body: JSON.stringify({ version, status: "RESOLVED" }),
       });
       router.refresh();
+      toast("Kendala ditandai selesai.", "success");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Gagal memperbarui.");
+      toast(e instanceof Error ? e.message : "Gagal memperbarui.", "error");
     } finally {
       setBusy(false);
     }

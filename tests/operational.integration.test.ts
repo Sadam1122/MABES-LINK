@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../scripts/load-env";
 
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -6,6 +6,7 @@ import {
   AppointmentStatus,
   CaseOrigin,
   EmailDeliveryStatus,
+  OutboxJobType,
   OutboxStatus,
   Role,
   ServiceCaseStatus,
@@ -167,10 +168,12 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
       latitude: 0,
       longitude: 0,
       locationLabel: "Titik ekuator",
+      locationSource: "MANUAL_COORDINATES",
     });
     expect(updated.latitude?.toString()).toBe("0");
     expect(updated.longitude?.toString()).toBe("0");
     expect(updated.locationUpdatedAt).toBeInstanceOf(Date);
+    expect(updated.locationSource).toBe("MANUAL_COORDINATES");
 
     const location = new URL(
       googleMapsLocationUrl({ latitude: -6.1501234, longitude: 106.8205678 }),
@@ -202,8 +205,13 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
   });
 
   it("mewajibkan PIC mengakui pekerjaan dan menolak akses lintas penugasan/cabang", async () => {
+    const prospectBeforeAppointment = await db.prospect.findUniqueOrThrow({
+      where: { id: prospectId },
+      select: { version: true },
+    });
     const item = await createServiceCase(supervisor, {
       prospectId,
+      prospectVersion: prospectBeforeAppointment.version,
       origin: CaseOrigin.OUT_BRANCH,
       title: "Penanganan layanan samaran",
       description: "Kendala aktivasi melalui prosedur resmi",
@@ -213,9 +221,41 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
       appointmentStatus: AppointmentStatus.NEEDS_SCHEDULING,
       sourceSystem: "CAKRA",
       sourceReference: `OP-SOURCE-${suffix}`,
+      contactPic: "Kontak Janji Samaran",
+      businessAlias: "Toko Janji Samaran",
+      locationLabel: "Pintu utama lokasi samaran",
+      latitude: -6.1447,
+      longitude: 106.81825,
+      locationSource: "MAP_PIN",
     });
     caseIds.push(item.id);
     expect(item.status).toBe(ServiceCaseStatus.ASSIGNED);
+    const appointmentProspect = await db.prospect.findUniqueOrThrow({
+      where: { id: prospectId },
+      select: {
+        contactPic: true,
+        businessAlias: true,
+        locationLabel: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+    expect(appointmentProspect).toMatchObject({
+      contactPic: "Kontak Janji Samaran",
+      businessAlias: "Toko Janji Samaran",
+      locationLabel: "Pintu utama lokasi samaran",
+    });
+    expect(appointmentProspect.latitude?.toString()).toBe("-6.1447");
+    expect(appointmentProspect.longitude?.toString()).toBe("106.81825");
+    expect(
+      await db.auditLog.count({
+        where: {
+          entityType: "Prospect",
+          entityId: prospectId,
+          action: "APPOINTMENT_CONTEXT_UPDATED",
+        },
+      }),
+    ).toBe(1);
     expect(
       await db.outboxJob.count({
         where: { serviceCaseId: item.id, status: OutboxStatus.PENDING },
@@ -290,14 +330,28 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
       appointmentAt: new Date(Date.now() + 86_400_000),
     });
     expect(confirmed.appointmentStatus).toBe(AppointmentStatus.CONFIRMED);
-    expect(
-      await db.outboxJob.count({
+    const confirmedJobs = await db.outboxJob.findMany({
         where: {
           serviceCaseId: item.id,
-          status: { in: [OutboxStatus.PENDING, OutboxStatus.PROCESSING] },
+          scheduleVersion: confirmed.version,
+          status: OutboxStatus.PENDING,
         },
-      }),
-    ).toBe(0);
+        orderBy: { runAt: "asc" },
+    });
+    expect(confirmedJobs).toHaveLength(2);
+    expect(confirmedJobs.every((job) => job.recipientId === actorB.id)).toBe(
+      true,
+    );
+    const dueJob = confirmedJobs.find(
+      (job) => job.type === OutboxJobType.APPOINTMENT_ACTION_DUE,
+    );
+    const preJob = confirmedJobs.find(
+      (job) => job.type === OutboxJobType.APPOINTMENT_PRE_DUE,
+    );
+    expect(dueJob?.runAt.getTime()).toBe(confirmed.appointmentAt?.getTime());
+    expect(preJob?.runAt.getTime()).toBe(
+      (confirmed.appointmentAt?.getTime() ?? 0) - 30 * 60_000,
+    );
     const accepted = await updateServiceCase(actorB, item.id, {
       version: confirmed.version,
       status: ServiceCaseStatus.ACCEPTED,
@@ -311,6 +365,14 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
       status: ServiceCaseStatus.HANDLED,
     });
     expect(handled.handledAt).toBeInstanceOf(Date);
+    expect(
+      await db.outboxJob.count({
+        where: {
+          serviceCaseId: item.id,
+          status: { in: [OutboxStatus.PENDING, OutboxStatus.PROCESSING] },
+        },
+      }),
+    ).toBe(0);
     expect(await db.usageVerification.count({ where: { prospectId } })).toBe(0);
     const verified = await updateServiceCase(supervisor, item.id, {
       version: handled.version,

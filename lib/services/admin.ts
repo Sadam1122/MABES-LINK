@@ -103,6 +103,12 @@ export async function updateUser(actor: Actor, id: string, input: PatchInput) {
       422,
       "SELF_DEACTIVATE",
     );
+  if (id === actor.id && input.role !== undefined && input.role !== Role.ADMIN)
+    throw new AppError(
+      "ADMIN tidak dapat menurunkan role akunnya sendiri.",
+      422,
+      "SELF_ROLE_CHANGE",
+    );
   const current = await db.user.findUnique({ where: { id } });
   if (!current)
     throw new AppError("Pengguna tidak ditemukan.", 404, "NOT_FOUND");
@@ -165,7 +171,6 @@ export async function updatePilotConfig(actor: Actor, input: PilotConfigInput) {
   const value = {
     ...((current?.value as Record<string, unknown> | null) ?? {}),
     ...input,
-    stage: 2,
     branchCode: "11539",
   };
   const config = await db.$transaction(async (tx) => {
@@ -174,7 +179,7 @@ export async function updatePilotConfig(actor: Actor, input: PilotConfigInput) {
       create: {
         key: "pilot",
         value,
-        description: "Konfigurasi pilot tahap 2",
+        description: "Konfigurasi evaluasi operasional cabang",
         updatedById: actor.id,
       },
       update: { value, updatedById: actor.id },

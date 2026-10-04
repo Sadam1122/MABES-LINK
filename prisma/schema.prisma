@@ -255,6 +255,7 @@ model Prospect {
   longitude          Decimal?            @db.Decimal(10, 7)
   productNeeds       String[]            @default([])
   locationLabel      String?             @db.VarChar(120)
+  locationSource     String?             @db.VarChar(32)
   locationUpdatedAt  DateTime?           @db.Timestamptz(3)
   isTest             Boolean             @default(false)
   testNamespace      String?             @db.VarChar(80)

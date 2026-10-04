@@ -1,9 +1,9 @@
 "use client";
-import { OpportunityStage } from "@prisma/client";
 import { CheckCircle2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
 
 export function ConfirmNeedButton({
@@ -14,23 +14,26 @@ export function ConfirmNeedButton({
   version: number;
 }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function run() {
-    if (!window.confirm("Konfirmasi bahwa kebutuhan sudah dibahas dengan PIC?"))
-      return;
+    if (!(await confirm({ title: "Konfirmasi kebutuhan?", description: "Pastikan kebutuhan sudah dibahas dengan PIC sebelum mengubah tahap peluang.", confirmLabel: "Konfirmasi" }))) return;
     setBusy(true);
     try {
       await clientApi(`/api/prospects/${id}`, {
         method: "PATCH",
         body: JSON.stringify({
           version,
-          opportunityStage: OpportunityStage.NEED_CONFIRMED,
+          opportunityStage: "NEED_CONFIRMED",
         }),
       });
       router.refresh();
+      toast("Kebutuhan berhasil dikonfirmasi.", "success");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Gagal memperbarui.");
+      const message = e instanceof Error ? e.message : "Gagal memperbarui.";
+      setError(message);
+      toast(message, "error");
     } finally {
       setBusy(false);
     }

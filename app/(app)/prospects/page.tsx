@@ -55,6 +55,7 @@ export default async function ProspectsPage({
           placeholder="Cari kode, alias, PIC, atau referensi CAKRA…"
         />
         <button className={buttonVariants({ variant: "outline" })}>Cari</button>
+        {search ? <Link href="/prospects" className={buttonVariants({ variant: "ghost" })}>Reset</Link> : null}
       </form>
       {data.items.length ? (
         <div className="table-wrap">

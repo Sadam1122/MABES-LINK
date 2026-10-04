@@ -31,6 +31,9 @@ const labels: Record<string, string> = {
   CONFIRMED: "Janji terkonfirmasi",
   REJECTED: "Ditolak",
 };
+export function statusLabel(value: string) {
+  return labels[value] ?? value.replaceAll("_", " ");
+}
 export function StatusBadge({ value }: { value: string }) {
   const tone =
     value === "READY" ||
@@ -54,5 +57,5 @@ export function StatusBadge({ value }: { value: string }) {
               value === "ACCEPTED"
             ? "blue"
             : "slate";
-  return <Badge tone={tone}>{labels[value] ?? value}</Badge>;
+  return <Badge tone={tone}>{statusLabel(value)}</Badge>;
 }

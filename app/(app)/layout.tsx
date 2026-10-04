@@ -2,6 +2,7 @@ import { Role } from "@prisma/client";
 import { Building2 } from "lucide-react";
 
 import { AppNav } from "@/components/app-nav";
+import { BrandLogo } from "@/components/brand-logo";
 import { NotificationCenter } from "@/components/notification-center";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
@@ -23,26 +24,27 @@ const scopeLabel = {
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const actor = await requirePageActor();
-  const branch = actor.branchId
-    ? await db.branch.findUnique({
-        where: { id: actor.branchId },
-        select: { code: true, name: true },
-      })
-    : null;
+  const [branch, notificationConfig] = await Promise.all([
+    actor.branchId
+      ? db.branch.findUnique({
+          where: { id: actor.branchId },
+          select: { code: true, name: true },
+        })
+      : null,
+    db.appConfig.findUnique({ where: { key: "notifications" } }),
+  ]);
+  const notificationValues = notificationConfig?.value as
+    | Record<string, unknown>
+    | null;
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[244px_1fr]">
+    <div id="app-shell" className="min-h-screen lg:grid lg:grid-cols-[244px_1fr]">
       <aside className="hidden min-h-screen flex-col bg-brand-deep text-white lg:fixed lg:inset-y-0 lg:flex lg:w-[244px]">
         <div className="border-b border-white/10 p-5">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-xl bg-accent font-black text-brand-deep">
-              ML
-            </div>
-            <div>
-              <p className="text-lg font-black leading-none">MABES LINK</p>
-              <p className="mt-1 text-[11px] text-blue-200">
-                Operasional Cabang 11539
-              </p>
-            </div>
+          <div>
+            <BrandLogo className="max-w-[182px]" sizes="182px" />
+            <p className="mt-2 text-[11px] text-blue-200">
+              Operasional Cabang 11539
+            </p>
           </div>
         </div>
         <AppNav
@@ -61,13 +63,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <header className="sticky top-0 z-[1100] border-b bg-white/90 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
             <div className="flex items-center gap-3 lg:hidden">
-              <div className="grid size-9 place-items-center rounded-xl bg-brand font-black text-white">
-                ML
-              </div>
-              <div>
-                <p className="text-sm font-black">MABES LINK</p>
-                <p className="text-[10px] text-slate-500">11539 · B.2</p>
-              </div>
+              <BrandLogo className="max-w-[142px]" sizes="142px" />
+              <span className="sr-only">11539 · B.2</span>
             </div>
             <div className="hidden items-center gap-2 text-sm text-slate-500 lg:flex">
               <Building2 size={16} />
@@ -80,7 +77,11 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
               </span>
             </div>
             <div className="flex items-center gap-3">
-              <NotificationCenter />
+              <NotificationCenter
+                userId={actor.id}
+                quietStart={String(notificationValues?.quietStart ?? "20:00")}
+                quietEnd={String(notificationValues?.quietEnd ?? "07:00")}
+              />
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-bold text-slate-900">{actor.name}</p>
                 <p className="text-xs text-slate-500">

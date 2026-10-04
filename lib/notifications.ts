@@ -135,6 +135,7 @@ export async function scheduleServiceCaseJobs(
     id: string;
     picId: string;
     dueAt: Date;
+    appointmentAt: Date | null;
     version: number;
     appointmentStatus: AppointmentStatus;
     isTest: boolean;
@@ -155,7 +156,8 @@ export async function scheduleServiceCaseJobs(
   });
   if (
     serviceCase.appointmentStatus !== AppointmentStatus.NEEDS_SCHEDULING &&
-    serviceCase.appointmentStatus !== AppointmentStatus.PENDING_CONFIRMATION
+    serviceCase.appointmentStatus !== AppointmentStatus.PENDING_CONFIRMATION &&
+    serviceCase.appointmentStatus !== AppointmentStatus.CONFIRMED
   )
     return;
   const config = await tx.appConfig.findUnique({
@@ -166,6 +168,16 @@ export async function scheduleServiceCaseJobs(
   const quietStart = String(raw?.quietStart ?? "20:00");
   const quietEnd = String(raw?.quietEnd ?? "07:00");
   const prefix = `appointment:${serviceCase.id}:v${serviceCase.version}`;
+  const reminderAt =
+    serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED &&
+    serviceCase.appointmentAt
+      ? serviceCase.appointmentAt
+      : serviceCase.dueAt;
+  const confirmedAppointment =
+    serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED;
+  const preReminderAt = new Date(
+    reminderAt.getTime() - minutes * 60_000,
+  );
   await tx.outboxJob.createMany({
     data: [
       {
@@ -175,11 +187,9 @@ export async function scheduleServiceCaseJobs(
         branchId,
         serviceCaseId: serviceCase.id,
         scheduleVersion: serviceCase.version,
-        runAt: applyJakartaQuietHours(
-          new Date(serviceCase.dueAt.getTime() - minutes * 60_000),
-          quietStart,
-          quietEnd,
-        ),
+        runAt: confirmedAppointment
+          ? preReminderAt
+          : applyJakartaQuietHours(preReminderAt, quietStart, quietEnd),
         isTest: serviceCase.isTest,
         testNamespace: serviceCase.testNamespace,
       },
@@ -190,7 +200,9 @@ export async function scheduleServiceCaseJobs(
         branchId,
         serviceCaseId: serviceCase.id,
         scheduleVersion: serviceCase.version,
-        runAt: applyJakartaQuietHours(serviceCase.dueAt, quietStart, quietEnd),
+        runAt: confirmedAppointment
+          ? reminderAt
+          : applyJakartaQuietHours(reminderAt, quietStart, quietEnd),
         isTest: serviceCase.isTest,
         testNamespace: serviceCase.testNamespace,
       },
@@ -380,7 +392,7 @@ export function createSmtpTransport(): Transporter | null {
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
-    tls: { minVersion: "TLSv1.2" },
+    tls: { minVersion: "TLSv1.2", rejectUnauthorized: true },
   });
 }
 
@@ -405,9 +417,13 @@ export async function deliverInternalEmail(
     dateStyle: "full",
     timeStyle: "short",
   }).format(input.scheduledAt);
+  const confirmedAppointment = /janji akuisisi/i.test(input.reminderType);
+  const reminderSentence = confirmedAppointment
+    ? "Sudah waktunya menjalankan janji akuisisi yang telah dikonfirmasi."
+    : "Sudah waktunya membuat atau mengonfirmasi janji follow-up.";
   const text = input.isTest
     ? `Halo,\nTugas ${input.taskCode} sudah perlu ditindaklanjuti. Silakan hubungi calon nasabah untuk membuat atau mengonfirmasi jadwal janji terkait kebutuhan layanan yang sudah dicatat.\nWaktu tindak lanjut: ${timeWib} WIB.\nBuka detail pekerjaan: ${input.link}`
-    : `Halo,\nTugas ${input.taskCode} memerlukan tindak lanjut untuk membuat atau mengonfirmasi janji.\nWaktu tindak lanjut: ${timeWib} WIB.\nBuka detail pekerjaan: ${input.link}`;
+    : `Halo,\nTugas ${input.taskCode}: ${reminderSentence}\nWaktu tindak lanjut: ${timeWib} WIB.\nBuka detail pekerjaan: ${input.link}`;
   if (process.env.EMAIL_ENABLED !== "true")
     return { status: EmailDeliveryStatus.DISABLED, preview: text };
   if (process.env.SMTP_DRY_RUN !== "false") {
@@ -429,8 +445,7 @@ export async function deliverInternalEmail(
     };
   }
   const dailyLimit = Number(process.env.EMAIL_DAILY_LIMIT ?? 250);
-  const start = new Date(now);
-  start.setUTCHours(0, 0, 0, 0);
+  const start = jakartaTimeToUtc(jakartaDateParts(now), "00:00");
   const sent = await client.emailDelivery.count({
     where: {
       status: EmailDeliveryStatus.SMTP_ACCEPTED,
@@ -510,7 +525,8 @@ export async function processJob(
       serviceCase.picId !== job.recipientId ||
       (serviceCase.appointmentStatus !== AppointmentStatus.NEEDS_SCHEDULING &&
         serviceCase.appointmentStatus !==
-          AppointmentStatus.PENDING_CONFIRMATION) ||
+          AppointmentStatus.PENDING_CONFIRMATION &&
+        serviceCase.appointmentStatus !== AppointmentStatus.CONFIRMED) ||
       ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(
         serviceCase.status,
       )
@@ -547,8 +563,15 @@ export async function processJob(
     title =
       serviceCase.appointmentStatus === AppointmentStatus.NEEDS_SCHEDULING
         ? "Perlu membuat janji"
-        : "Perlu mengonfirmasi janji";
-    message = `${code} memerlukan tindak lanjut oleh PIC.`;
+        : serviceCase.appointmentStatus === AppointmentStatus.PENDING_CONFIRMATION
+          ? "Perlu mengonfirmasi janji"
+          : job.type === OutboxJobType.APPOINTMENT_PRE_DUE
+            ? "Janji akuisisi segera dimulai"
+            : "Waktunya janji akuisisi";
+    message =
+      serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED
+        ? `${code} memiliki janji terkonfirmasi pada jadwal yang tercatat.`
+        : `${code} memerlukan tindak lanjut oleh PIC.`;
   } else if (job.followUpId) {
     const followUp = await client.followUp.findUnique({
       where: { id: job.followUpId },
@@ -596,6 +619,7 @@ export async function processJob(
             in: [
               AppointmentStatus.NEEDS_SCHEDULING,
               AppointmentStatus.PENDING_CONFIRMATION,
+              AppointmentStatus.CONFIRMED,
             ],
           },
           status: {

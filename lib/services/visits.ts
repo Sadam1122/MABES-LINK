@@ -3,6 +3,7 @@ import {
   OpportunityStage,
   Prisma,
   Role,
+  UsageStatus,
   VisitOutcome,
 } from "@prisma/client";
 import type { z } from "zod";
@@ -34,6 +35,7 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
   const where: Prisma.ProspectWhereInput = {
     AND: [
       prospectScope(actor),
+      { usageVerifications: { some: { status: UsageStatus.VERIFIED } } },
       input.areaBlock ? { areaBlock: input.areaBlock } : {},
       input.businessSector ? { businessSector: input.businessSector } : {},
       input.actionNeeded
@@ -84,6 +86,11 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
           orderBy: { createdAt: "desc" },
           take: 3,
         },
+        usageVerifications: {
+          where: { status: UsageStatus.VERIFIED },
+          orderBy: { usedAt: "desc" },
+          take: 1,
+        },
       },
       orderBy: { updatedAt: "desc" },
       skip,
@@ -91,7 +98,12 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
     }),
     db.prospect.count({ where }),
     db.prospect.findMany({
-      where: prospectScope(actor),
+      where: {
+        AND: [
+          prospectScope(actor),
+          { usageVerifications: { some: { status: UsageStatus.VERIFIED } } },
+        ],
+      },
       select: { areaBlock: true, businessSector: true },
       distinct: ["areaBlock", "businessSector"],
     }),

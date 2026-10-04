@@ -43,10 +43,17 @@ const include = {
       internalCode: true,
       cakraReference: true,
       businessAlias: true,
+      contactPic: true,
       need: true,
       locationLabel: true,
       latitude: true,
       longitude: true,
+      productNeeds: true,
+      locationPhotos: {
+        select: { id: true, width: true, height: true },
+        orderBy: { createdAt: "desc" as const },
+        take: 3,
+      },
       usageVerifications: { where: { status: "VERIFIED" as const }, take: 1 },
     },
   },
@@ -177,6 +184,60 @@ export async function createServiceCase(
     );
 
   return db.$transaction(async (tx) => {
+    const updatesProspect =
+      input.contactPic !== undefined ||
+      input.businessAlias !== undefined ||
+      input.locationLabel !== undefined ||
+      input.latitude !== undefined ||
+      input.longitude !== undefined ||
+      input.locationSource !== undefined;
+    if (updatesProspect) {
+      const updated = await tx.prospect.updateMany({
+        where: { id: prospect.id, version: input.prospectVersion },
+        data: {
+          contactPic: input.contactPic,
+          businessAlias: input.businessAlias,
+          locationLabel: input.locationLabel,
+          latitude: input.latitude,
+          longitude: input.longitude,
+          locationSource: input.locationSource,
+          locationUpdatedAt:
+            input.latitude !== undefined ||
+            input.longitude !== undefined ||
+            input.locationLabel !== undefined ||
+            input.locationSource !== undefined
+              ? new Date()
+              : undefined,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1)
+        throw new AppError(
+          "Referensi telah diubah pengguna lain. Muat ulang lalu coba lagi.",
+          409,
+          "VERSION_CONFLICT",
+        );
+      await writeAudit(tx, actor, {
+        entityType: "Prospect",
+        entityId: prospect.id,
+        action: "APPOINTMENT_CONTEXT_UPDATED",
+        branchId,
+        before: {
+          contactPic: prospect.contactPic,
+          businessAlias: prospect.businessAlias,
+          latitude: prospect.latitude,
+          longitude: prospect.longitude,
+        },
+        after: {
+          contactPic: input.contactPic ?? prospect.contactPic,
+          businessAlias: input.businessAlias ?? prospect.businessAlias,
+          latitude: input.latitude ?? prospect.latitude,
+          longitude: input.longitude ?? prospect.longitude,
+          locationSource: input.locationSource,
+        },
+        requestId,
+      });
+    }
     const item = await tx.serviceCase.create({
       data: {
         code: makeCode("ML-11539"),
@@ -354,7 +415,8 @@ export async function updateServiceCase(
     if (
       terminal ||
       (updated.appointmentStatus !== AppointmentStatus.NEEDS_SCHEDULING &&
-        updated.appointmentStatus !== AppointmentStatus.PENDING_CONFIRMATION)
+        updated.appointmentStatus !== AppointmentStatus.PENDING_CONFIRMATION &&
+        updated.appointmentStatus !== AppointmentStatus.CONFIRMED)
     )
       await cancelServiceCaseJobs(
         tx,

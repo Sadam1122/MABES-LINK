@@ -1,7 +1,10 @@
-import "dotenv/config";
+import "../scripts/load-env";
 
 import { db } from "../lib/db";
 import { workerTick } from "../lib/notifications";
+import { validateWorkerEnvironment } from "../lib/env-validation";
+
+validateWorkerEnvironment();
 
 const interval = Math.max(
   5_000,

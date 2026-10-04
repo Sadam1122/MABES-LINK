@@ -4,6 +4,7 @@ import {
   CircleMarker,
   MapContainer,
   Polygon,
+  Popup,
   TileLayer,
   Tooltip,
   useMap,
@@ -15,6 +16,7 @@ import {
   MANGGA_BESAR_BOUNDARY,
   MANGGA_BESAR_CENTER,
 } from "@/lib/mangga-besar-boundary";
+import { googleMapsLocationUrl } from "@/lib/geo";
 type Point = {
   id: string;
   code: string;
@@ -22,6 +24,13 @@ type Point = {
   latitude: number;
   longitude: number;
   actionNeeded: boolean;
+  businessAlias: string;
+  picName: string;
+  stage: string;
+  dueAt: string | null;
+  contactName: string;
+  productNeeds: string[];
+  usedAt: string | null;
 };
 function Picker({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   useMapEvents({
@@ -117,6 +126,18 @@ export default function MappingMap({
             <br />
             {point.label}
           </Tooltip>
+          <Popup>
+            <div className="min-w-48 space-y-1 text-sm">
+              <strong>{point.businessAlias}</strong>
+              <p>{point.code} · PIC {point.picName}</p>
+              <p>Pengguna: {point.contactName}</p>
+              <p>Produk: {point.productNeeds.length ? point.productNeeds.join(", ") : "Belum dirinci"}</p>
+              <p>{point.usedAt ? `Terverifikasi ${new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium" }).format(new Date(point.usedAt))}` : "Penggunaan belum terverifikasi"}</p>
+              <p>Status: {point.stage.replaceAll("_", " ")}</p>
+              <p>{point.dueAt ? `Follow-up ${new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }).format(new Date(point.dueAt))} WIB` : "Belum ada jadwal follow-up"}</p>
+              <a href={googleMapsLocationUrl({ latitude: point.latitude, longitude: point.longitude })} target="_blank" rel="noreferrer" className="inline-block font-bold text-blue-700 underline">Buka Google Maps</a>
+            </div>
+          </Popup>
         </CircleMarker>
       ))}
       {userPosition && (

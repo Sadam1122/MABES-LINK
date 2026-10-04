@@ -1,5 +1,4 @@
 "use client";
-import { BatchType } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { SubmitButton } from "@/components/submit-button";
@@ -23,7 +22,7 @@ export function HandoverForm({
       await clientApi("/api/handovers", {
         method: "POST",
         body: JSON.stringify({
-          type: BatchType.SINGLE,
+          type: "SINGLE",
           title: form.get("title"),
           receiverId: form.get("receiverId"),
           prospectIds: [prospectId],

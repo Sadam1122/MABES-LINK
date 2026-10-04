@@ -7,6 +7,8 @@
     "mysql2": "3.24.5"
   },
   "scripts": {
+    "postinstall": "prisma generate",
+    "prebuild": "prisma generate",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -18,15 +20,21 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:visual": "tsx scripts/visual-check.ts",
+    "test:roles": "tsx scripts/role-access-check.ts",
+    "start:test": "tsx scripts/start-test-server.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
-    "smoke:test-email": "tsx scripts/smoke-test-email.ts"
+    "smoke:test-email": "tsx scripts/smoke-test-email.ts",
+    "smoke:test-alarm": "tsx scripts/smoke-test-alarm.ts",
+    "seed:roles": "tsx scripts/seed-roles.ts",
+    "seed:roles:remove": "tsx scripts/seed-roles.ts --remove"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "@next/env": "16.3.8",
     "better-auth": "^1.7.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

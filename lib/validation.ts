@@ -36,6 +36,10 @@ export const prospectCreateSchema = z.object({
   longitude: z.coerce.number().min(-180).max(180).optional().nullable(),
   productNeeds: z.array(z.string().trim().min(2).max(80)).max(12).default([]),
   locationLabel: optionalTrimmed(120).transform((value) => value || null),
+  locationSource: z
+    .enum(["MAP_PIN", "MANUAL_COORDINATES", "DEVICE_GEOLOCATION"])
+    .optional()
+    .nullable(),
 });
 
 export const prospectPatchSchema = z
@@ -52,6 +56,10 @@ export const prospectPatchSchema = z
     longitude: z.number().min(-180).max(180).nullable().optional(),
     productNeeds: z.array(z.string().trim().min(2).max(80)).max(12).optional(),
     locationLabel: optionalTrimmed(120),
+    locationSource: z
+      .enum(["MAP_PIN", "MANUAL_COORDINATES", "DEVICE_GEOLOCATION"])
+      .nullable()
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if ((value.latitude == null) !== (value.longitude == null)) {
@@ -115,6 +123,16 @@ export const serviceCaseCreateSchema = z
     appointmentAt: z.coerce.date().optional().nullable(),
     sourceSystem: optionalTrimmed(40),
     sourceReference: optionalTrimmed(100),
+    prospectVersion: z.number().int().positive().optional(),
+    contactPic: z.string().trim().min(2).max(100).optional(),
+    businessAlias: z.string().trim().min(2).max(120).optional(),
+    locationLabel: optionalTrimmed(120),
+    latitude: z.number().min(-90).max(90).nullable().optional(),
+    longitude: z.number().min(-180).max(180).nullable().optional(),
+    locationSource: z
+      .enum(["MAP_PIN", "MANUAL_COORDINATES", "DEVICE_GEOLOCATION"])
+      .nullable()
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if (
@@ -131,6 +149,25 @@ export const serviceCaseCreateSchema = z
         code: "custom",
         path: ["sourceReference"],
         message: "Sistem dan referensi sumber harus diisi bersama.",
+      });
+    if ((value.latitude == null) !== (value.longitude == null))
+      ctx.addIssue({
+        code: "custom",
+        path: ["latitude"],
+        message: "Latitude dan longitude harus diisi bersama.",
+      });
+    const updatesProspect =
+      value.contactPic !== undefined ||
+      value.businessAlias !== undefined ||
+      value.locationLabel !== undefined ||
+      value.latitude !== undefined ||
+      value.longitude !== undefined ||
+      value.locationSource !== undefined;
+    if (updatesProspect && !value.prospectVersion)
+      ctx.addIssue({
+        code: "custom",
+        path: ["prospectVersion"],
+        message: "Versi referensi wajib untuk memperbarui data janji.",
       });
   });
 

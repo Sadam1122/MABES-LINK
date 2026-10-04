@@ -30,3 +30,18 @@ export async function markNotificationRead(actor: Actor, id: bigint) {
   if (result.count !== 1)
     throw new AppError("Notifikasi tidak ditemukan.", 404, "NOT_FOUND");
 }
+
+export async function markAllNotificationsRead(actor: Actor) {
+  const result = await db.notification.updateMany({
+    where: {
+      recipientId: actor.id,
+      isTest: false,
+      readAt: null,
+      ...(actor.branchId
+        ? { OR: [{ branchId: actor.branchId }, { branchId: null }] }
+        : {}),
+    },
+    data: { readAt: new Date() },
+  });
+  return { updated: result.count };
+}

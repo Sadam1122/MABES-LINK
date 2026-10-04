@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../scripts/load-env";
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
@@ -17,6 +17,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 import {
   applyJakartaQuietHours,
   claimJobs,
@@ -26,9 +27,12 @@ import {
 import type { Actor } from "@/lib/session";
 import { createFollowUp, updateFollowUp } from "@/lib/services/follow-ups";
 import { createHandover, updateHandover } from "@/lib/services/handovers";
-import { listNotifications } from "@/lib/services/notifications";
+import {
+  listNotifications,
+  markAllNotificationsRead,
+} from "@/lib/services/notifications";
 import { createUsageVerification } from "@/lib/services/usage";
-import { createVisit } from "@/lib/services/visits";
+import { createVisit, listMappingProspects } from "@/lib/services/visits";
 
 const suffix = crypto.randomUUID().slice(0, 8);
 const prospectId = `stage2-prospect-${suffix}`;
@@ -69,7 +73,7 @@ function client() {
   if (!process.env.DATABASE_URL)
     throw new Error("DATABASE_URL tidak tersedia.");
   return new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+    adapter: new PrismaPg({ connectionString: resolveDatabaseUrl() }),
   });
 }
 
@@ -277,6 +281,13 @@ describe("tahap 2 mapping, outbox, SSE dan SMTP", () => {
     const visible = await listNotifications(out, undefined, 100);
     expect(visible.some((item) => item.title === "Untuk Raka")).toBe(true);
     expect(visible.some((item) => item.title === "Untuk Dina")).toBe(false);
+    const marked = await markAllNotificationsRead(out);
+    expect(marked.updated).toBeGreaterThanOrEqual(1);
+    expect(
+      await db.notification.count({
+        where: { recipientId: out2.id, dedupKey: `notice-out2-${suffix}`, readAt: null },
+      }),
+    ).toBe(1);
   });
 
   it("membedakan SMTP dry-run, kuota, dan kegagalan", async () => {
@@ -376,6 +387,15 @@ describe("tahap 2 mapping, outbox, SSE dan SMTP", () => {
       status: HandoverStatus.READY,
     });
     expect(await db.usageVerification.count({ where: { prospectId } })).toBe(0);
+    expect(
+      (
+        await listMappingProspects(supervisor, {
+          page: 1,
+          pageSize: 20,
+          actionNeeded: false,
+        })
+      ).items.some((item) => item.id === prospectId),
+    ).toBe(false);
     await createUsageVerification(cs, {
       prospectId,
       status: UsageStatus.VERIFIED,
@@ -388,5 +408,12 @@ describe("tahap 2 mapping, outbox, SSE dan SMTP", () => {
         where: { prospectId, status: UsageStatus.VERIFIED },
       }),
     ).toBe(1);
+    const mappedUsers = await listMappingProspects(supervisor, {
+      page: 1,
+      pageSize: 20,
+      actionNeeded: false,
+    });
+    expect(mappedUsers.items.some((item) => item.id === prospectId)).toBe(true);
+    expect(mappedUsers.items[0]?.usageVerifications).toHaveLength(1);
   });
 });

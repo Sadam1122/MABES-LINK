@@ -1,9 +1,28 @@
 "use client";
-import { HandoverStatus, Role } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
+
+const HandoverStatus = {
+  DRAFT: "DRAFT",
+  SUBMITTED: "SUBMITTED",
+  ACCEPTED: "ACCEPTED",
+  PROCESSING: "PROCESSING",
+  ON_HOLD: "ON_HOLD",
+  ESCALATED: "ESCALATED",
+  READY: "READY",
+} as const;
+type HandoverStatus = (typeof HandoverStatus)[keyof typeof HandoverStatus];
+
+const Role = {
+  OUT_BRANCH: "OUT_BRANCH",
+  CS: "CS",
+  SUPERVISOR: "SUPERVISOR",
+  ADMIN: "ADMIN",
+} as const;
+type Role = (typeof Role)[keyof typeof Role];
 
 const next: Record<
   string,
@@ -98,6 +117,7 @@ export function HandoverActions({
   role: Role;
 }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState("");
   const allowed = (next[status] ?? []).filter(() =>
     status === HandoverStatus.DRAFT
@@ -107,7 +127,7 @@ export function HandoverActions({
       : ([Role.CS, Role.SUPERVISOR, Role.ADMIN] as Role[]).includes(role),
   );
   async function run(item: (typeof allowed)[number]) {
-    if (!confirm(item.confirm)) return;
+    if (!(await confirm({ title: item.label, description: item.confirm, confirmLabel: item.label }))) return;
     setBusy(item.status);
     try {
       await clientApi(`/api/handovers/${id}`, {
@@ -115,8 +135,9 @@ export function HandoverActions({
         body: JSON.stringify({ version, status: item.status }),
       });
       router.refresh();
+      toast("Status handover berhasil diperbarui.", "success");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Gagal memperbarui.");
+      toast(e instanceof Error ? e.message : "Gagal memperbarui.", "error");
     } finally {
       setBusy("");
     }

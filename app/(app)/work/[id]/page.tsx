@@ -1,9 +1,12 @@
+/* eslint-disable @next/next/no-img-element -- gambar privat memerlukan cookie sesi */
+
 import { Role } from "@prisma/client";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { ServiceCaseActions } from "@/components/service-case-actions";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDateTime } from "@/lib/format";
+import { googleMapsLocationUrl } from "@/lib/geo";
 import { requirePageActor } from "@/lib/session";
 import { getServiceCase } from "@/lib/services/service-cases";
 
@@ -49,6 +52,14 @@ export default async function WorkDetailPage({
                 <dd className="font-semibold">{item.pic.name}</dd>
               </div>
               <div>
+                <dt className="text-xs text-slate-400">Janji dengan</dt>
+                <dd className="font-semibold">{item.prospect.contactPic}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Nama toko/usaha</dt>
+                <dd>{item.prospect.businessAlias || "Tidak dicantumkan"}</dd>
+              </div>
+              <div>
                 <dt className="text-xs text-slate-400">Next action</dt>
                 <dd>{item.nextAction}</dd>
               </div>
@@ -68,6 +79,41 @@ export default async function WorkDetailPage({
             <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-6">
               {item.description}
             </p>
+            {item.prospect.latitude != null &&
+            item.prospect.longitude != null ? (
+              <div className="mt-5 rounded-xl border p-4">
+                <p className="text-xs text-slate-400">Lokasi janji</p>
+                <p className="mt-1 font-semibold">
+                  {item.prospect.locationLabel || "Titik lokasi tersimpan"}
+                </p>
+                <a
+                  className="mt-3 inline-flex min-h-11 items-center rounded-xl border px-4 text-sm font-bold text-blue-800 hover:bg-blue-50"
+                  target="_blank"
+                  rel="noreferrer"
+                  href={googleMapsLocationUrl({
+                    latitude: Number(item.prospect.latitude),
+                    longitude: Number(item.prospect.longitude),
+                  })}
+                >
+                  Buka Google Maps
+                </a>
+              </div>
+            ) : null}
+            {item.prospect.locationPhotos.length ? (
+              <div className="mt-5">
+                <p className="text-xs text-slate-400">Foto lokasi</p>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {item.prospect.locationPhotos.map((photo) => (
+                    <img
+                      key={photo.id}
+                      src={`/api/location-photos/${photo.id}`}
+                      alt="Foto lokasi janji"
+                      className="h-28 w-40 rounded-xl object-cover"
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
           <div className="card p-5">
             <h2 className="font-black">Readiness</h2>

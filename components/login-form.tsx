@@ -41,7 +41,7 @@ export function LoginForm() {
           type="email"
           autoComplete="username"
           required
-          placeholder="nama@mabeslink.local"
+          placeholder="nama@perusahaan.co.id"
         />
       </div>
       <div>

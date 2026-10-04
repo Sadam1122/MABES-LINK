@@ -91,9 +91,10 @@ export default async function FollowUpsPage({
           <option value="">Semua kondisi</option>
           <option value="1">Terkait handover tertahan</option>
         </select>
-        <button className={buttonVariants({ variant: "outline" })}>
-          Terapkan
-        </button>
+        <div className="flex gap-2">
+          <button className={buttonVariants({ variant: "outline" })}>Terapkan</button>
+          {Object.keys(q).length ? <Link href="/follow-ups" className={buttonVariants({ variant: "ghost" })}>Reset</Link> : null}
+        </div>
       </form>
       {data.items.length ? (
         <div className="space-y-3">

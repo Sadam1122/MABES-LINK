@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../scripts/load-env";
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
@@ -12,6 +12,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 import { AppError } from "@/lib/errors";
 import type { Actor } from "@/lib/session";
 import {
@@ -213,8 +214,7 @@ describe("integrasi akses dan alur handover", () => {
   });
 
   it("data bertahan setelah client database direstart", async () => {
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) throw new Error("DATABASE_URL tidak tersedia.");
+    const connectionString = resolveDatabaseUrl();
     const key = `restart-test-${suffix}`;
     const first = new PrismaClient({
       adapter: new PrismaPg({ connectionString }),

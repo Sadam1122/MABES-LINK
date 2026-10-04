@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
+import { BrandLogo } from "@/components/brand-logo";
 import { Badge } from "@/components/ui/badge";
 import { getActor } from "@/lib/session";
 
@@ -10,12 +11,7 @@ export default async function LoginPage() {
       <section className="relative hidden overflow-hidden bg-brand-deep p-12 text-white lg:flex lg:flex-col lg:justify-between">
         <div className="absolute -right-24 -top-24 size-96 rounded-full bg-blue-600/20 blur-3xl" />
         <div className="relative">
-          <div className="mb-16 flex items-center gap-3">
-            <div className="grid size-11 place-items-center rounded-xl bg-accent text-lg font-black text-brand-deep">
-              ML
-            </div>
-            <span className="text-xl font-black">MABES LINK</span>
-          </div>
+          <BrandLogo className="mb-16 max-w-[300px]" sizes="300px" />
           <h1 className="max-w-xl text-5xl font-black leading-[1.08] tracking-tight">
             Satu alur kerja.
             <br />
@@ -33,10 +29,7 @@ export default async function LoginPage() {
       <section className="flex items-center justify-center p-5 sm:p-10">
         <div className="w-full max-w-md">
           <div className="mb-8 lg:hidden">
-            <div className="mb-5 grid size-12 place-items-center rounded-xl bg-brand font-black text-white">
-              ML
-            </div>
-            <h1 className="text-3xl font-black">MABES LINK</h1>
+            <BrandLogo className="max-w-[250px]" sizes="250px" />
           </div>
           <Badge tone="blue">Akses internal</Badge>
           <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">

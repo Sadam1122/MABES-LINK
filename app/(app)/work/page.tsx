@@ -3,7 +3,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { ServiceCaseForm } from "@/components/service-case-form";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge, statusLabel } from "@/components/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { prospectScope } from "@/lib/authorization";
 import { db } from "@/lib/db";
@@ -30,7 +30,7 @@ export default async function WorkPage({
   )
     ? (value("appointmentStatus") as AppointmentStatus)
     : undefined;
-  const [data, prospects, officers] = await Promise.all([
+  const [data, prospectRows, officers] = await Promise.all([
     listServiceCases(actor, {
       page: Math.max(1, Number(value("page")) || 1),
       pageSize: 30,
@@ -46,32 +46,54 @@ export default async function WorkPage({
         internalCode: true,
         cakraReference: true,
         businessAlias: true,
+        contactPic: true,
+        branchId: true,
+        version: true,
+        locationLabel: true,
+        latitude: true,
+        longitude: true,
+        locationSource: true,
       },
       orderBy: { updatedAt: "desc" },
       take: 100,
     }),
-    actor.branchId
+    actor.branchId || actor.role === Role.ADMIN
       ? db.user.findMany({
           where: {
-            branchId: actor.branchId,
+            ...(actor.role === Role.ADMIN
+              ? { branchId: { not: null } }
+              : { branchId: actor.branchId }),
             active: true,
             isTest: false,
             ...(actor.role !== Role.SUPERVISOR && actor.role !== Role.ADMIN
               ? { id: actor.id }
               : {}),
           },
-          select: { id: true, name: true },
+          select: { id: true, name: true, branchId: true },
           orderBy: { name: "asc" },
         })
       : [],
   ]);
+  const prospects = prospectRows.map((prospect) => ({
+    ...prospect,
+    latitude:
+      prospect.latitude == null ? null : Number(prospect.latitude),
+    longitude:
+      prospect.longitude == null ? null : Number(prospect.longitude),
+  }));
   return (
     <>
       <PageHeader
         eyebrow="Kendali layanan"
-        title="Pekerjaan"
-        description="Satu alur in-branch dan out-branch dari penugasan sampai verifikasi dan penutupan."
-        actions={<ServiceCaseForm prospects={prospects} officers={officers} />}
+        title="Akuisisi Nasabah"
+        description="Buat janji dari referensi existing, tentukan orang yang ditemui, lokasi, dan waktu agar PIC menerima reminder internal."
+        actions={
+          actor.role === Role.OUT_BRANCH ||
+          actor.role === Role.SUPERVISOR ||
+          actor.role === Role.ADMIN ? (
+            <ServiceCaseForm prospects={prospects} officers={officers} />
+          ) : undefined
+        }
       />
       <form className="card mb-5 grid gap-3 p-4 md:grid-cols-4">
         <input
@@ -84,7 +106,7 @@ export default async function WorkPage({
           <option value="">Semua status</option>
           {Object.values(ServiceCaseStatus).map((s) => (
             <option key={s} value={s}>
-              {s.replaceAll("_", " ")}
+              {statusLabel(s)}
             </option>
           ))}
         </select>
@@ -100,7 +122,7 @@ export default async function WorkPage({
           <option value="COMPLETED">Terlaksana</option>
           <option value="CANCELLED">Dibatalkan</option>
         </select>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -113,6 +135,11 @@ export default async function WorkPage({
           <button className={buttonVariants({ variant: "outline" })}>
             Filter
           </button>
+          {Object.keys(query).length ? (
+            <Link href="/work" className={buttonVariants({ variant: "ghost" })}>
+              Reset
+            </Link>
+          ) : null}
         </div>
       </form>
       {data.items.length ? (
@@ -154,7 +181,7 @@ export default async function WorkPage({
           title="Belum ada pekerjaan"
           description={
             prospects.length
-              ? "Buat pekerjaan dari referensi existing yang berwenang Anda akses."
+              ? "Buat janji akuisisi dari referensi existing yang berwenang Anda akses."
               : "Belum ada referensi existing yang dapat digunakan. Hubungi pengelola sumber data resmi."
           }
         />

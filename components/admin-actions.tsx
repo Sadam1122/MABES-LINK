@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { Button } from "@/components/ui/button";
+import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
 
 export function UserStatusButton({
@@ -13,14 +14,10 @@ export function UserStatusButton({
   active: boolean;
 }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   async function run() {
-    if (
-      !confirm(
-        `${active ? "Nonaktifkan" : "Aktifkan"} akun ini?${active ? " Semua sesi aktif akan dicabut." : ""}`,
-      )
-    )
-      return;
+    if (!(await confirm({ title: active ? "Nonaktifkan akun?" : "Aktifkan akun?", description: active ? "Semua sesi aktif akun ini akan dicabut." : "Akun akan dapat masuk kembali.", confirmLabel: active ? "Nonaktifkan" : "Aktifkan", tone: active ? "danger" : "default" }))) return;
     setBusy(true);
     try {
       await clientApi(`/api/admin/users/${id}`, {
@@ -28,8 +25,9 @@ export function UserStatusButton({
         body: JSON.stringify({ active: !active }),
       });
       router.refresh();
+      toast("Status akun berhasil diperbarui.", "success");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Gagal memperbarui akun.");
+      toast(e instanceof Error ? e.message : "Gagal memperbarui akun.", "error");
     } finally {
       setBusy(false);
     }
@@ -49,6 +47,7 @@ export function EmailStatusButton({
   enabled: boolean;
 }) {
   const router = useRouter();
+  const { toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   async function run() {
     setBusy(true);
@@ -58,8 +57,9 @@ export function EmailStatusButton({
         body: JSON.stringify({ emailNotificationsEnabled: !enabled }),
       });
       router.refresh();
+      toast("Izin email berhasil diperbarui.", "success");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Gagal memperbarui izin email.");
+      toast(e instanceof Error ? e.message : "Gagal memperbarui izin email.", "error");
     } finally {
       setBusy(false);
     }
@@ -68,6 +68,57 @@ export function EmailStatusButton({
     <Button size="sm" variant="outline" onClick={run} disabled={busy}>
       {busy ? "Menyimpan…" : enabled ? "Matikan email" : "Izinkan email"}
     </Button>
+  );
+}
+
+export function UserAccessForm({
+  id,
+  role,
+  branchId,
+  branches,
+}: {
+  id: string;
+  role: "ADMIN" | "CS" | "SUPERVISOR" | "OUT_BRANCH";
+  branchId: string | null;
+  branches: { id: string; code: string; name: string }[];
+}) {
+  const router = useRouter();
+  const { toast } = useFeedback();
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      await clientApi(`/api/admin/users/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          role: form.get("role"),
+          branchId: form.get("branchId") || null,
+        }),
+      });
+      router.refresh();
+      toast("Role dan cabang berhasil diperbarui.", "success");
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "Akses pengguna gagal diperbarui.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form onSubmit={submit} className="mt-3 grid gap-2 sm:grid-cols-[minmax(130px,.7fr)_minmax(180px,1fr)_auto]">
+      <select name="role" className="field" defaultValue={role} aria-label="Role pengguna">
+        <option value="ADMIN">ADMIN</option>
+        <option value="CS">CS</option>
+        <option value="SUPERVISOR">SUPERVISOR</option>
+        <option value="OUT_BRANCH">OUTBRANCH</option>
+      </select>
+      <select name="branchId" className="field" defaultValue={branchId ?? ""} aria-label="Cabang pengguna">
+        <option value="">Tanpa cabang (khusus ADMIN)</option>
+        {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.code} · {branch.name}</option>)}
+      </select>
+      <Button type="submit" size="sm" variant="outline" disabled={busy}>{busy ? "Menyimpan…" : "Simpan akses"}</Button>
+    </form>
   );
 }
 

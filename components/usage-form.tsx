@@ -1,23 +1,19 @@
 "use client";
-import { UsageStatus } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { SubmitButton } from "@/components/submit-button";
+import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
 import { jakartaLocalToIso } from "@/lib/format";
 
 export function UsageForm({ prospectId }: { prospectId: string }) {
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (
-      !confirm(
-        "Verifikasi bahwa layanan sudah benar-benar digunakan berdasarkan referensi bukti ini?",
-      )
-    )
-      return;
+    if (!(await confirm({ title: "Verifikasi penggunaan?", description: "Pastikan layanan benar-benar telah digunakan dan referensi bukti internal sudah benar.", confirmLabel: "Verifikasi" }))) return;
     setBusy(true);
     const form = new FormData(event.currentTarget);
     try {
@@ -25,7 +21,7 @@ export function UsageForm({ prospectId }: { prospectId: string }) {
         method: "POST",
         body: JSON.stringify({
           prospectId,
-          status: UsageStatus.VERIFIED,
+          status: "VERIFIED",
           usedAt: jakartaLocalToIso(String(form.get("usedAt"))),
           evidenceReference: form.get("evidenceReference"),
           note: form.get("note") || null,
@@ -33,8 +29,11 @@ export function UsageForm({ prospectId }: { prospectId: string }) {
       });
       event.currentTarget.reset();
       router.refresh();
+      toast("Penggunaan berhasil diverifikasi.", "success");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Gagal memverifikasi.");
+      const message = e instanceof Error ? e.message : "Gagal memverifikasi.";
+      setError(message);
+      toast(message, "error");
     } finally {
       setBusy(false);
     }

@@ -1,144 +1,155 @@
 # Status Implementasi MABES LINK
 
-Tanggal pemeriksaan terakhir: 3 Oktober 2026 (Asia/Jakarta)
+Tanggal pemeriksaan terakhir: 5 Oktober 2026 (Asia/Jakarta)
 
 ## Ringkasan aktual
 
-Repo existing telah dilanjutkan tanpa reset database, penggantian stack, atau deployment publik. UI login dan area aplikasi hanya menampilkan MABES LINK serta menu operasional berbasis role: Beranda, Pekerjaan, Peta, Notifikasi, dan Pengaturan untuk ADMIN. Label fase pengembangan, tombol seeder, kredensial development, dan data test tidak muncul pada tampilan operasional.
+Repo existing dilanjutkan tanpa mengganti stack, reset database operasional, atau deployment publik. Seeder data bisnis dan seeder notifikasi tetap tidak ada. Seeder baru `seed:roles` hanya untuk empat akun testing, memiliki pengaman berlapis, dan telah diuji pada database terpisah `mabeslink_test`.
 
-Implementasi menghasilkan build dan image yang dapat dijalankan, namun belum dinyatakan production-ready. Approval keamanan/infrastruktur, verifikasi proses CAKRA, drill restore, deliverability SMTP, uji beban/failover, dan observability organisasi masih diperlukan.
+Database lokal mempertahankan cabang `11539` dan migration existing. Setelah data seed dibersihkan, akun operasional dibuat melalui alur aplikasi; pemeriksaan terakhir menemukan dua akun non-test dengan role yang diizinkan. `bootstrap:admin` hanya diperlukan bila belum ada ADMIN aktif dan menolak berjalan bila ADMIN operasional sudah tersedia. Tidak ada kredensial default. Role aplikasi hanya `ADMIN`, `CS`, `SUPERVISOR`, dan `OUT_BRANCH`; UI menampilkan label `OUTBRANCH` tanpa mengganti enum database existing.
+
+Implementasi lulus build dan pemeriksaan yang tercantum di bawah, tetapi belum dinyatakan production-ready. Approval keamanan/infrastruktur, konfirmasi proses CAKRA, drill restore, SMTP resmi, deliverability, dan pengujian notifikasi pada perangkat organisasi masih diperlukan.
 
 ## Arsitektur dan versi
 
 - Web/backend: Next.js App Router 16.3.8, React 19.2.8, TypeScript 5, Route Handlers Node.js.
 - UI: Tailwind CSS 4, Leaflet 1.9.4, React Leaflet 5.0.0.
-- Data: PostgreSQL 16, Prisma/Prisma Client 7.10.0, kolom waktu `timestamptz(3)` dan penyajian Asia/Jakarta.
-- Auth: Better Auth 1.7.7, password provider library, signup publik nonaktif, session cookie HTTP-only/SameSite, secure cookie pada production.
+- Data: PostgreSQL 16, Prisma/Prisma Client 7.10.0, waktu `timestamptz(3)` dan tampilan Asia/Jakarta.
+- Auth: Better Auth 1.7.7, password hash library, signup publik nonaktif, cookie session HTTP-only/SameSite dan secure pada production.
 - Validasi/delivery/media: Zod 4.6.5, Nodemailer 10.0.13, Sharp 0.35.5.
-- Scheduler: proses Node.js terpisah dari web, outbox PostgreSQL, heartbeat dan lease persisten.
-- Deployment: satu image `mabeslink:internal`; service Compose terpisah untuk database, migration, web, dan worker.
+- Scheduler: proses Node.js terpisah, outbox PostgreSQL, locking `SKIP LOCKED`, lease, retry/backoff, heartbeat, dan recovery restart.
+- Deployment: satu image aplikasi dengan service Compose terpisah untuk migration, web, worker, PostgreSQL, foto privat, dan backup.
 
-Alur request: UI/Route Handler → sesi → pemeriksaan role/cabang/penugasan → validasi Zod → service/transaksi Prisma → PostgreSQL/AuditLog. Alur worker: jadwal PostgreSQL → atomic claim/lease → validasi ulang versi/status/PIC → Notification persisten → SMTP opsional → status delivery. Operasi jaringan SMTP tidak berlangsung di dalam transaksi claim.
+Alur request: UI/Route Handler → session → pemeriksaan role/cabang/penugasan → Zod → service/transaksi Prisma → PostgreSQL/AuditLog. Alur reminder: jadwal PostgreSQL → claim atomik → validasi ulang versi/status/PIC → Notification persisten → email opsional di luar transaksi → status delivery.
 
 ## Migration dan skema
 
-Lima migration tercatat dan `prisma migrate status` menyatakan schema up to date:
+Enam migration terpasang dan database operasional maupun `mabeslink_test` sudah menerima migration aditif `20261004090000_add_location_source`; tidak ada reset atau penghapusan data. Kolom nullable `Prospect.locationSource` menyimpan `MAP_PIN`, `MANUAL_COORDINATES`, atau `DEVICE_GEOLOCATION` tanpa membuat master lokasi/prospek baru.
 
-1. `20261002055845_init`
-2. `20261002061500_unique_prospect_handover`
-3. `20261002072718_stage2_mapping_notifications`
-4. `20261002082930_operational_service_cases_locations`
-5. `20261002083053_isolate_test_notifications`
+Model penting tetap: `Prospect`, `FollowUp`, `Visit`, `HandoverBatch`, `ExceptionCase`, `UsageVerification`, `ServiceCase`, `Notification`, `OutboxJob`, `EmailDelivery`, `LocationPhoto`, `AuditLog`, dan `WorkerHeartbeat`. Koordinat tersimpan sebagai `Decimal(10,7)`, lokasi/foto memakai record prospek yang sama, dan readiness layanan tetap berbeda dari penggunaan terverifikasi.
 
-Migration terbaru bersifat additive, kecuali penggantian indeks non-unik dengan indeks yang mencakup flag test; tidak ada tabel/baris existing yang dihapus dan tidak ada reset.
+## Role dan cakupan server
 
-Model penting:
+- `OUT_BRANCH` / label `OUTBRANCH`: prospek yang dibuat/ditugaskan, pekerjaan sendiri, lokasi/visit/follow-up sendiri, dan handover yang dikirim.
+- `CS`: pekerjaan yang ditugaskan dan handover yang diterima; penyelesaian/penggunaan sesuai kewenangan.
+- `SUPERVISOR`: seluruh data non-test cabangnya, assign/reassign, verifikasi, dan penutupan.
+- `ADMIN`: visibilitas dan administrasi lintas cabang, seluruh mapping operasional, akun, dan konfigurasi. ADMIN tetap tidak memalsukan pengakuan penerimaan yang secara audit harus dilakukan PIC penerima.
 
-- `Prospect`: record existing bersama, referensi CAKRA opsional/unik, metadata lokasi, koordinat `Decimal(10,7)`, kebutuhan produk, PIC, visit/follow-up/handover/penggunaan, serta relasi ke `ServiceCase` dan `LocationPhoto`.
-- `ServiceCase`: satu kasus in-branch/out-branch dengan `CREATED`, `ASSIGNED`, `ACCEPTED`, `IN_PROGRESS`, cabang menunggu/eskalasi, `HANDLED`, `VERIFIED`, `CLOSED`, `REOPENED`, `CANCELLED`; optimistic `version`; next action/dueAt; status/waktu janji; penerimaan PIC; source reference unik; audit.
-- `Notification`, `OutboxJob`, `EmailDelivery`: recipient, branch, service case/follow-up, schedule version, unique dedup key, lease, attempts, status, messageId/preview/error.
-- `LocationPhoto`: storage key privat, MIME hasil re-encode, ukuran, dimensi, checksum, creator, timestamp, FK ke record existing.
-- `WorkerHeartbeat`: identitas proses, hostname, PID, startedAt, dan lastSeen.
-- `isTest`/`testNamespace`: isolasi data seeder email dari query operasional, dashboard, laporan, SSE, dan daftar akun.
+Scope diulang pada query API, mutation, SSE, dan akses gambar. ADMIN tidak mendapat akses tersirat ke CAKRA/core banking.
 
-## Role dan izin server
+## Perubahan selesai
 
-- `OUT_BRANCH`: pekerjaan/prospek yang ditugaskan atau dibuat sendiri sesuai scope; lokasi/visit/follow-up sendiri; handover yang dikirim.
-- `CS`: pekerjaan yang ditugaskan, handover yang diterima, subkasus/penyelesaian/penggunaan sesuai kewenangan; tidak mengubah mapping prospek langsung.
-- `SUPERVISOR`: seluruh data non-test cabangnya, assign/reassign, verifikasi/penutupan.
-- `ADMIN`: administrasi lintas cabang dan konfigurasi; record test tetap dikeluarkan dari daftar operasional.
+### Janji akuisisi, mapping penggunaan, dan detail notifikasi
 
-Penerimaan `ServiceCase` hanya dapat dilakukan oleh PIC yang ditugaskan, termasuk ketika caller adalah supervisor. Verifikasi dan penutupan memerlukan supervisor/admin. Semua endpoint pekerjaan, peta, notifikasi, SSE, dan gambar mengulangi scope di server; tombol tersembunyi bukan kontrol akses utama.
+- Menu **Akuisisi Nasabah** kini membuka form **Buat janji** dari referensi existing. Form mengisi orang yang ditemui dari record yang sama, menerima nama toko/usaha opsional, alasan/tujuan, PIC internal, waktu janji WIB, pin peta/geolocation, label lokasi, serta satu foto lokasi opsional dengan preview.
+- Penyimpanan janji memperbarui konteks pada `Prospect` existing dengan optimistic concurrency (`version`) dan audit `APPOINTMENT_CONTEXT_UPDATED`, lalu membuat `ServiceCase` berstatus janji `CONFIRMED`. Foto melewati endpoint privat dan validasi/re-encode server existing; kegagalan foto tidak menghilangkan janji yang sudah berhasil disimpan dan dilaporkan jelas ke pengguna.
+- Reminder untuk janji `CONFIRMED` dijadwalkan terhadap `appointmentAt`, 30 menit sebelum dan saat waktu janji. Worker tetap memvalidasi ulang versi, PIC, status janji, dan status kasus; selesai/batal membatalkan job aktif.
+- Mapping sekarang hanya mengambil record dengan penggunaan produk `VERIFIED`. Kartu dan popup marker menampilkan pengguna/kontak, daftar produk, tanggal verifikasi, PIC internal, lokasi, serta tautan koordinat Google Maps. Data pipeline yang belum mempunyai penggunaan terverifikasi tidak disajikan seolah sudah menjadi pengguna.
+- Lonceng notifikasi membuka dropdown ringkas. **Lihat detail** menutup dropdown lalu membuka modal detail; penandaan dibaca dan focus restore ke lonceng tetap tersedia.
 
-## Fungsi selesai
+### Akun dan seeder
 
-### Pekerjaan dan janji
+- `prisma/seed.ts`, seeder data bisnis/notifikasi, `db:seed`, `seed:test-notifications`, `DEMO_PASSWORD`, dan konfigurasi Prisma seed tetap tidak digunakan.
+- `seed:roles` membuat tepat empat akun `.test` untuk `ADMIN`, `CS`, `SUPERVISOR`, dan `OUT_BRANCH`. Perintah wajib memakai database testing bernama mengandung `test`, flag izin, dan konfirmasi eksplisit; production ditolak.
+- Password acak di-hash melalui Better Auth dan hanya ditulis ke `role.md` privat yang diabaikan Git. Run ulang tidak menggandakan akun atau mengganti password; `seed:roles:remove` hanya menargetkan empat ID uji.
+- Suite integrasi membuat fixture unik sendiri dan membersihkannya; tidak bergantung pada akun/data seed.
+- `bootstrap:admin` membuat tepat satu ADMIN awal, menolak overwrite, menolak jika ADMIN aktif sudah ada, memakai password kuat dari environment, dan tidak mencetak password.
+- Pembersihan lokal menghapus 7 akun test, 6 prospek test, 3 service case terkait, serta relasi/audit/delivery test. Cabang 11539 dan migration dipertahankan.
 
-- Form membuat pekerjaan memilih referensi existing dan tidak meminta ulang identitas/kebutuhan dasar.
-- Transisi layanan tervalidasi, termasuk alasan wajib untuk menunggu/eskalasi, optimistic conflict, timestamp, dan audit perubahan.
-- `NEEDS_SCHEDULING`, `PENDING_CONFIRMATION`, `CONFIRMED`, `COMPLETED`, dan `CANCELLED` dibedakan; waktu janji wajib saat terkonfirmasi.
-- Reschedule/reassign/status janji/penyelesaian membatalkan reminder versi lama. Readiness layanan dan penggunaan produk ditampilkan terpisah.
-- Pembuatan referensi prospek manual nonaktif secara default untuk menghindari basis lead kedua. Audit batas CAKRA ada di `CAKRA_NON_DUPLICATION.md` dan tidak mengklaim API/kebaruan internal.
+### Mapping Mangga Besar
 
-### Peta, geolocation, Google Maps, dan jarak
+- Overlay polygon interaktif memakai geometri WGS84 yang disederhanakan dari FeatureServer GIS Pemprov DKI untuk Kelurahan Mangga Besar (`KDEPUM 3173031005`).
+- Peta dapat menampilkan/sembunyikan batas, fokus ke wilayah, memilih titik/marker, mencari nama/toko/PIC, serta memfilter status, PIC, kategori, jadwal, dan posisi di dalam/luar batas. Popup marker menampilkan kode, status, PIC, jadwal, dan tautan Google Maps berbasis koordinat.
+- Titik di luar batas mendapat peringatan dan konfirmasi; overlay diberi label sebagai referensi administratif, bukan penetapan wilayah kerja cabang.
+- Header desktop dan kartu scope menampilkan role/cakupan aktif. ADMIN ditandai akses superadmin lintas cabang; navigasi memakai label **Akuisisi Nasabah**, **Mapping**, **Notifikasi**, **Pengaturan Notifikasi**, dan **Manajemen Pengguna** khusus ADMIN.
+- Fitur existing tetap: lokasi manual/pin/geolocation, Google Maps URLs, Haversine, urutan terdekat, dan foto privat.
 
-- Leaflet client-side dengan daftar fallback, marker tersimpan, manual pin/koordinat, “Lokasi saya”, konfirmasi penyimpanan, filter dan nearest sorting.
-- Latitude/longitude wajib lengkap atau sama-sama kosong, rentang tervalidasi, nilai 0 tidak dianggap kosong, dan lokasi memiliki label/waktu pembaruan.
-- Penolakan izin, unavailable, timeout, dan akurasi rendah mempunyai pesan berbeda. Posisi perangkat hanya state sementara tanpa tracking kontinu/riwayat GPS.
-- URL lokasi/navigasi dibentuk dengan `URL`/`URLSearchParams` dan hanya membawa koordinat. Jarak Haversine dilabeli “Jarak garis lurus”; rute/waktu tempuh diserahkan ke navigasi Google Maps.
+### Notifikasi laptop/HP
 
-### Foto lokasi privat
+- Tombol Notifikasi sekarang membuka dropdown daftar terlebih dahulu; modal detail hanya muncul setelah **Lihat detail** dipilih. Badge unread, status SSE/polling, tandai dibaca/semua dibaca, tautan internal, loading, empty, error, waktu WIB, dan deduplikasi tetap tersedia.
+- Halaman **Pengaturan Notifikasi** terpisah menyediakan **Aktifkan Suara**, **Tes Suara**, volume 0-100%, mute, stop, pengulangan 1/3/5/10/20 kali, pilihan jenis reminder, file alarm lokal opsional, izin notifikasi sistem, dan status aktif/perlu aktivasi ulang. Jadwal global hanya dapat diubah ADMIN.
+- Pengelola audio singleton memakai `AudioContext`/`GainNode`, dibuat atau dilanjutkan hanya dari klik pengguna, menghentikan nada lama sebelum nada baru, dan menyimpan preferensi per user/perangkat tanpa menganggap autoplay telah terbuka setelah reload.
+- Akar masalah implementasi lama diperbaiki: `AudioContext` sebelumnya hanya dibuat bersamaan dengan izin notifikasi browser, dan effect SSE dibuat ulang setiap perubahan mode/pengulangan. Aktivasi audio kini mandiri dan koneksi SSE tidak bergantung pada kontrol suara.
+- Service worker `public/mabeslink-notifications-sw.js` menampilkan notifikasi sistem yang dapat membuka tautan internal; URL lintas origin ditolak.
+- Initial history tidak dibunyikan. Cursor SSE dimulai setelah initial fetch, claim `localStorage` dan `BroadcastChannel` mengurangi duplikasi antar-tab/reconnect. Janji terkonfirmasi sekarang dijadwalkan tepat 30 menit sebelum dan pada `appointmentAt`, dikategorikan sebagai suara janji, dan menjadi pengecualian jam senyap; quiet hours tetap mematikan bunyi reminder umum tanpa menyembunyikan notifikasi visual.
+- Preferensi audio yang sudah aktif dipersenjatai kembali pada interaksi pertama setelah reload. Ini tetap mematuhi autoplay policy browser; bila browser menolak, pengguna memakai **Aktifkan Suara**.
+- File alarm maksimal 5 MB/30 detik didecode browser, disimpan per user/perangkat di IndexedDB, tidak dikirim ke server, dan dapat diganti/dihapus. Notifikasi baru juga menghasilkan toast kecil di kanan atas; tombol stop membatalkan seluruh sumber audio terjadwal agar tidak menumpuk.
+- Fitur memerlukan HTTPS/localhost, izin pengguna, dan dukungan browser. Saat ini alarm perangkat aktif selama MABES LINK terbuka; ketika browser tertutup, sumber persisten adalah worker/outbox dan email bila SMTP aktif. Web Push background belum diimplementasikan.
 
-- Upload opsional, preview, thumbnail, ganti, dan hapus; form lokasi tetap dapat disimpan tanpa foto.
-- Default maksimum 3 file, 5 MB/file, dimensi 8.000 px; JPEG/PNG/WebP saja.
-- Server menguji isi/decode melalui Sharp, menolak format lain termasuk SVG, merotasi menurut orientasi, resize maksimum 2048, re-encode WebP tanpa metadata/EXIF, dan memakai UUID acak.
-- File disimpan pada volume `PRIVATE_STORAGE_PATH` di luar webroot; database menyimpan metadata/checksum. GET/PATCH/DELETE gambar berotorisasi dan perubahan masuk audit log.
+### SMTP
 
-### Reminder, SSE, dan email
+- Environment memakai host `smtp-relay.brevo.com`, port `587`, login `bc7ba9001@smtp-brevo.com`, dan sender `MABES LINK <aturbabyincubator@gmail.com>`. `SMTP_PASS` tetap kosong, `EMAIL_ENABLED=false`, dan `SMTP_DRY_RUN=true`; tidak ada key yang dibuat atau dicetak.
+- Transport Nodemailer memakai port 465 sebagai implicit TLS atau STARTTLS wajib untuk port lain, TLS minimum 1.2, certificate verification default, serta timeout koneksi/greeting/socket.
+- `smoke:test-email` tidak lagi bergantung pada seed/job test. Recipient dikunci ke `sadamalrasyid1@gmail.com`, harus berupa akun internal non-test aktif yang mengizinkan email, template tidak berisi identitas nasabah, transport diverifikasi, dibatasi satu percobaan persisten per hari WIB, dan opt-in `EMAIL_ENABLED=true` + `SMTP_DRY_RUN=false` wajib.
+- Jalur reminder operasional tetap melalui worker/outbox dan menyimpan `messageId`/status. `SMTP_ACCEPTED` tidak dianggap bukti pesan masuk inbox.
+- Template internal memuat kalimat “Sudah waktunya membuat atau mengonfirmasi janji follow-up.”, waktu WIB, kode tugas, dan tautan login tanpa identitas nasabah.
 
-- Worker default tick 60 detik dan harus selalu berjalan terpisah dari web/browser.
-- Atomic claim memakai `FOR UPDATE SKIP LOCKED`, unique dedup key, lease dua menit, retry maksimum/backoff, dan pemulihan lease setelah restart. Dua worker tidak memperoleh job yang sama.
-- SSE memeriksa database default setiap 2 detik dengan recipient/branch scope, cursor dan reconnect; UI fallback polling 5 detik.
-- Email hanya ke alamat petugas internal aktif/diizinkan. Konten hanya kode tugas, jenis reminder, waktu WIB, dan tautan login; tidak memasukkan nama/telepon/rekening/alamat/saldo/gambar/dokumen nasabah.
-- Status dibedakan: `QUEUED`, `DRY_RUN`, `SMTP_ACCEPTED`, `FAILED`, `UNKNOWN`, `DISABLED`, `QUOTA_BLOCKED`. Failure/quota memakai retry terbatas; status ambigu tidak diretry otomatis. SMTP accepted tidak dianggap bukti inbox.
-- `seed:test-notifications` idempotent membuat dua tugas samaran pada namespace terisolasi dan tidak mengirim langsung. `smoke:test-email` mengunci recipient, memerlukan opt-in eksplisit, memverifikasi transport, dan dedup per hari.
+### Finishing UI dan konfigurasi
 
-## Endpoint utama
+- Dialog bersama memiliki tombol X 44 px, Escape, klik overlay, focus trap/restore, `inert` background, scroll lock, sticky footer, konfirmasi perubahan belum disimpan, z-index di atas Leaflet, animasi 200 ms, dan `prefers-reduced-motion`.
+- Form prospek, pekerjaan, batch payroll, alasan status, dan seluruh konfirmasi penting memakai dialog/feedback konsisten; native `alert`, `prompt`, dan `window.confirm` tidak lagi dipakai.
+- Toast global, loading/disabled, retry error, badge unread, status SSE/polling, dan reset filter ditambahkan. Input form tetap berada di state DOM bila request gagal.
+- `.env.local`/`.env.example` dikelompokkan menjadi APP, AUTH, DATABASE, SMTP, WORKER, NOTIFICATIONS, STORAGE, dan TESTING. Key legacy `DEMO_PASSWORD`/`NEXT_PUBLIC_APP_URL` dihapus, tidak ada duplikasi, dan script Node/test memuat urutan environment Next melalui `@next/env`. Konfigurasi lokal kembali menetapkan `ALLOW_MANUAL_REFERENCE_ENTRY=false`.
+- Logo `/Gambar/logo.png` dipakai pada sidebar, header mobile, login, loading, dan metadata icon tanpa absolute Windows path.
+- `postinstall` dan `prebuild` menjalankan `prisma generate`. Seluruh Client Component tidak lagi mengimpor runtime `@prisma/client`, sehingga Turbopack tidak mencoba membundel `.prisma/client/index-browser`; build telah diuji dari kondisi generated client belum tersedia.
 
-- `GET /api/health`
-- `GET/POST /api/service-cases`
-- `GET/PATCH /api/service-cases/:id`
-- `GET /api/mapping`, `POST /api/visits`
-- `PATCH /api/prospects/:id`, `POST /api/prospects/:id/photos`
-- `GET/PATCH/DELETE /api/location-photos/:id`
-- `GET /api/notifications`, `PATCH /api/notifications/:id`, `GET /api/notifications/stream`
-- Endpoint existing prospek, follow-up, handover/subkasus, usage verification, dashboard, akun dan notification config tetap tersedia dan dikontrol server.
+## Endpoint dan file penting
 
-## File penting
-
-- `prisma/schema.prisma`, `prisma/migrations/`, `prisma/seed.ts`
-- `lib/authorization.ts`, `lib/validation.ts`, `lib/workflow.ts`
-- `lib/services/service-cases.ts`, `lib/notifications.ts`, `worker/index.ts`
-- `lib/geo.ts`, `lib/services/location-photos.ts`
-- `app/(app)/work/`, `app/(app)/mapping/`, `app/(app)/notifications/`
-- `app/api/service-cases/`, `app/api/location-photos/`, `app/api/health/`
-- `scripts/seed-test-notifications.ts`, `scripts/smoke-test-email.ts`
-- `Dockerfile`, `docker-compose.production.yml`, `.env.production.example`
-- `scripts/backup.ps1`, `scripts/restore.ps1`, `CAKRA_NON_DUPLICATION.md`
-- `tests/operational.integration.test.ts` dan suite regresi existing.
-
-## Hasil pemeriksaan aktual
-
-- Prisma format/validate/generate: berhasil.
-- Migration status: 5 migration, database up to date, tanpa reset.
-- Seed dasar: berhasil; seeder notification dijalankan dua kali dan tetap menghasilkan total 4 deduplicated job untuk 2 tugas.
-- Worker dry-run: 3 delivery `DRY_RUN`; job sisa kemudian diproses dengan email nonaktif sebagai `DISABLED`. Seluruh 4 job selesai dan tidak ada notifikasi test yang terlihat sebagai notifikasi operasional.
-- Typecheck: berhasil.
-- ESLint: berhasil tanpa error/warning.
-- Tes: 4 file / 23 tes berhasil. Cakupan bermakna termasuk lintas petugas/cabang, penerimaan PIC, transisi invalid, pemisahan readiness/penggunaan, dua worker, recovery restart, timezone, isolasi SSE/test, SMTP dry-run/failure/quota, koordinat 0/batas/pasangan, Google URLs, Haversine, pesan kegagalan GPS, gambar valid/invalid/SVG, replace/delete dan akses privat.
-- Production build lokal: berhasil; static generation 26/26 dan seluruh Route Handler terdaftar, tanpa warning tracing storage setelah storage eksternal ditandai untuk bundler.
-- Docker Compose config: valid menggunakan `.env.production.example`.
-- Image `mabeslink:internal`: berhasil dibangun. Dependency runtime dipasang dengan `--omit=dev` dan audit build melaporkan 0 vulnerability.
-- Smoke image web: Next production start berhasil; `/api/health` mengembalikan database `ok`.
-- Smoke image worker: tick pertama berhasil dan `npm run worker:health` menyatakan heartbeat sehat.
-- Persistensi restart PostgreSQL: jumlah branch 2 sebelum/sesudah restart dan container kembali `healthy`.
-- UI desktop 1440×900 dan HP 390×844: login, peta, menu role, tile/atribusi, dan navigasi mobile tampil; tidak ada overflow horizontal, console error, atau label pengembangan terlarang. Screenshot test berada di `.artifacts/` dan tidak dilacak Git.
-- Sintaks script backup/restore: valid. Restore drill penuh **belum dijalankan**.
-- Smoke email nyata: secara sengaja tidak dijalankan karena kredensial SMTP resmi tidak tersedia. Script terbukti menolak eksekusi ketika `EMAIL_ENABLED=true`/`SMTP_DRY_RUN=false` belum diaktifkan eksplisit. Tidak ada klaim email masuk inbox.
-- `npm audit --omit=dev`: 0 vulnerability. Audit penuh masih melaporkan advisory high pada rantai `eslint-config-next → fast-glob → micromatch → braces` yang hanya dipakai tooling development; registry belum menyediakan versi `braces` di atas 3.0.3 pada pemeriksaan ini, sehingga pemaksaan downgrade lint tidak dilakukan.
-- Saat Next/SSE dihentikan paksa, `pg` 8.23.1 mencetak deprecation warning query concurrent yang akan berubah pada pg 9; tidak ada test gagal, tetapi graceful shutdown/upgrade perlu dipantau.
+- Health/auth: `GET /api/health`, `/api/auth/[...all]`.
+- Pekerjaan: `/api/service-cases`, `/api/follow-ups`, `/api/handovers`, `/api/usage-verifications`.
+- Mapping: `/api/mapping`, `/api/visits`, `/api/prospects/:id`, endpoint foto privat.
+- Notifikasi: `/api/notifications`, `/api/notifications/:id`, `/api/notifications/stream`.
+- Admin: `/api/admin/users`, `/api/admin/config`, `/api/admin/notification-config`.
+- Peta: `components/mapping-map.tsx`, `components/mapping-workspace.tsx`, `lib/mangga-besar-boundary.ts`.
+- Alarm/pengaturan: `components/notification-center.tsx`, `components/notification-audio-settings.tsx`, `public/mabeslink-notifications-sw.js`.
+- Dialog/feedback/audio: `components/ui/dialog.tsx`, `components/ui/feedback.tsx`, `lib/client/notification-audio.ts`.
+- Worker/SMTP: `worker/index.ts`, `lib/notifications.ts`, `scripts/smoke-test-email.ts`.
+- Provisioning: `scripts/bootstrap-admin.ts`.
+- Testing role: `scripts/seed-roles.ts`, `scripts/role-access-check.ts`, `scripts/start-test-server.ts`, `role.md` (lokal/ignored).
 
 ## Cara menjalankan
 
-Lokal: `docker compose up -d postgres` → `npm ci` → `npm run db:generate` → `npm run db:deploy` → `npm run db:seed` → `npm run dev:all`.
+```powershell
+Copy-Item .env.example .env.local
+# Isi BETTER_AUTH_SECRET.
+docker compose up -d postgres
+npm ci
+npm run db:generate
+npm run db:deploy
+$env:BOOTSTRAP_ADMIN_NAME='Administrator MABES LINK'
+$env:BOOTSTRAP_ADMIN_EMAIL='admin-internal@example.com'
+$env:BOOTSTRAP_ADMIN_PASSWORD='password-kuat-yang-ditentukan-sendiri'
+npm run bootstrap:admin
+Remove-Item Env:BOOTSTRAP_ADMIN_PASSWORD
+npm run dev:all
+```
 
-Internal Compose: isi `.env.production`, lalu `docker compose --env-file .env.production -f docker-compose.production.yml up -d --build`. Jangan menjalankan seed development di production. Detail backup, restore, SMTP, storage, dan verifikasi ada di `README.md`.
+Worker harus selalu berjalan terpisah dari web. Reverse proxy internal harus menyediakan HTTPS agar cookie production, geolocation, service worker, dan notifikasi perangkat berfungsi.
+
+Untuk role testing, buat database terpisah `mabeslink_test`, deploy migration ke database tersebut, isi flag TESTING dari `.env.example`, lalu jalankan `npm run seed:roles`. Kredensial aktual berada hanya di `role.md`. Gunakan `npm run start:test` dan `npm run test:roles`; hapus akun dengan `npm run seed:roles:remove` menggunakan pengaman yang sama.
+
+## Hasil pemeriksaan aktual
+
+- Prisma format/validate: berhasil.
+- Migration status: 6 migration, schema up to date, tanpa reset.
+- Typecheck: berhasil.
+- ESLint: berhasil tanpa error/warning setelah perbaikan effect izin notifikasi.
+- Tes: 7 file / 35 tes berhasil. Termasuk akses lintas petugas/cabang, handover, status/penggunaan, reminder janji terkonfirmasi dan pembatalannya saat selesai, dua worker, recovery restart, timezone, isolasi notifikasi, kategori alarm janji dan pengecualian jam senyap, SMTP dry-run/failure/quota, koordinat, Haversine, foto privat, polygon Mangga Besar, volume/pengulangan alarm, deduplikasi audio, pengaman database testing, dan scope ADMIN.
+- `seed:roles` dijalankan ulang pada `mabeslink_test` dan terbukti idempotent. `test:roles` membuktikan login UI keempat role, menu Manajemen Pengguna hanya ADMIN, API admin 200 untuk ADMIN/403 untuk tiga role lain, API mapping 200 sesuai sesi, dan route `/admin` dialihkan untuk non-ADMIN.
+- Production build: berhasil; 27/27 halaman statis selesai dan route dinamis termasuk `/notification-settings` terdaftar. Regresi Prisma Client Browser tidak muncul.
+- UI 1440×900, 768×1024, 390×844, dan 360×800: Mapping, polygon, filter, dropdown lalu modal detail notifikasi, scope/header role, tile attribution, dan navigasi mobile tampil tanpa overflow horizontal atau console error. Tes headless juga memeriksa tandai dibaca, focus restore, overlay, Escape, dirty confirmation, kontrol audio 0/50/100/mute, pengulangan 20 kali, dan decode/upload WAV lokal tanpa error.
+- Smoke alarm non-headless berhasil: akun uji sementara login, audio diaktifkan melalui klik browser, notifikasi `APPOINTMENT_ACTION_DUE` persisten diterima melalui SSE, toast muncul, dan Web Audio dijadwalkan lima kali. Script membersihkan akun/notifikasi uji. Keluaran fisik speaker tetap perlu dikonfirmasi oleh pendengar.
+- Smoke SMTP nyata dijalankan dengan opt-in sementara, tetapi berhenti sebelum koneksi karena `SMTP_PASS` kosong. Tidak ada email yang dikirim dan tidak ada klaim inbox. `EMAIL_ENABLED=false` serta `SMTP_DRY_RUN=true` tetap menjadi nilai aman pada environment lokal.
+- Data operasional existing tidak diubah atau dihapus. Empat akun role `.test` tetap terisolasi di `mabeslink_test`; fixture integrasi/visual lain dibersihkan otomatis.
+- Warning yang masih terlihat: driver `pg` memberi deprecation warning untuk concurrent query yang akan berubah pada pg 9; tes tetap lulus.
 
 ## Belum terbukti / tindak lanjut internal
 
-- Kepemilikan master lead/visit/reminder CAKRA, mekanisme link/import resmi, data contract, rekonsiliasi, dan retensi belum dikonfirmasi pemilik sistem. Tidak ada integrasi CAKRA/core banking yang diklaim.
-- SMTP eksternal nyata, sender/domain verification, quota akun aktual, deliverability inbox, dan status bounce belum diuji.
-- Restore drill database+foto, enkripsi/retensi backup, object storage/signed URL alternatif, uji beban, failover multi-instance, alerting, audit retention, SSO/enterprise identity, CSP/hardening formal, DAST/SAST, pentest, aksesibilitas formal, dan approval organisasi belum selesai.
-- Tile provider, lokasi, foto, dan hosting nyata wajib mendapat persetujuan privasi/keamanan. Infrastruktur web, worker, PostgreSQL, storage, backup, TLS/reverse proxy, monitoring dan operasional tetap mempunyai biaya terpisah dari kuota SMTP gratis.
+- Kredensial SMTP resmi, sender/domain verification, quota akun aktual, `SMTP_ACCEPTED`, deliverability inbox, bounce, dan email ke alamat uji belum terbukti.
+- Notifikasi sistem perlu diuji manual pada laptop/HP organisasi melalui HTTPS dan izin browser. Background notification saat aplikasi tertutup memerlukan desain Web Push/VAPID terpisah; tidak diklaim tersedia.
+- Tes suara headless membuktikan kontrol dan Web Audio tidak error, tetapi suara yang benar-benar terdengar pada speaker laptop/HP belum diverifikasi manual.
+- Batas wilayah kerja cabang harus dikonfirmasi internal; polygon saat ini hanya referensi administratif sumber publik DKI.
+- Kepemilikan master lead/visit/reminder CAKRA, data contract, link/import resmi, rekonsiliasi, dan retensi belum dikonfirmasi pemilik sistem.
+- Restore drill database+foto, enkripsi/retensi backup, SSO, CSP/hardening formal, DAST/SAST, pentest, uji beban/failover, alerting, dan approval infrastruktur belum selesai.
 
-Tidak ada deployment publik, data nyata bank, keputusan kredit otomatis, bypass OTP/biometrik, atau klaim bahwa fungsi ini belum pernah ada di Mandiri.
+Tidak ada deployment publik, data nyata bank, integrasi CAKRA/core banking, keputusan kredit otomatis, atau bypass OTP/biometrik.

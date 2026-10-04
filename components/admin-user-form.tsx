@@ -1,9 +1,15 @@
 "use client";
-import { Role } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { clientApi } from "@/lib/client-api";
+
+const roleOptions = [
+  { value: "ADMIN", label: "ADMIN" },
+  { value: "CS", label: "CS" },
+  { value: "SUPERVISOR", label: "SUPERVISOR" },
+  { value: "OUT_BRANCH", label: "OUTBRANCH" },
+];
 
 export function AdminUserForm({
   branches,
@@ -56,9 +62,9 @@ export function AdminUserForm({
         <div>
           <label className="label">Role</label>
           <select className="field" name="role" required>
-            {Object.values(Role).map((r) => (
-              <option key={r} value={r}>
-                {r}
+            {roleOptions.map((role) => (
+              <option key={role.value} value={role.value}>
+                {role.label}
               </option>
             ))}
           </select>

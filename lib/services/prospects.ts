@@ -155,10 +155,12 @@ export async function createProspect(
         longitude: input.longitude,
         productNeeds: input.productNeeds,
         locationLabel: input.locationLabel,
+        locationSource: input.locationSource,
         locationUpdatedAt:
           input.latitude !== undefined ||
           input.longitude !== undefined ||
-          input.locationLabel !== undefined
+          input.locationLabel !== undefined ||
+          input.locationSource !== undefined
             ? new Date()
             : undefined,
       },
@@ -250,10 +252,12 @@ export async function updateProspect(
         longitude: input.longitude,
         productNeeds: input.productNeeds,
         locationLabel: input.locationLabel,
+        locationSource: input.locationSource,
         locationUpdatedAt:
           input.latitude !== undefined ||
           input.longitude !== undefined ||
-          input.locationLabel !== undefined
+          input.locationLabel !== undefined ||
+          input.locationSource !== undefined
             ? new Date()
             : undefined,
         version: { increment: 1 },
