@@ -1,6 +1,14 @@
 "use client";
 
-import { Bell, BellRing, Info, Trash2, Upload, Volume2, VolumeX } from "lucide-react";
+import {
+  Bell,
+  BellRing,
+  Info,
+  Trash2,
+  Upload,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +21,7 @@ import {
   loadSoundPreferences,
   normalizeVolume,
   NOTIFICATION_PREFERENCES_EVENT,
+  type ReminderAlarmUrgency,
   saveCustomSound,
   saveSoundPreferences,
   type ReminderSoundKind,
@@ -35,11 +44,17 @@ export function NotificationAudioSettings({
   quietStart: string;
   quietEnd: string;
 }) {
-  const { toast } = useFeedback();
-  const [preferences, setPreferences] = useState<SoundPreferences>(defaultSoundPreferences);
+  const { confirm, toast } = useFeedback();
+  const [preferences, setPreferences] = useState<SoundPreferences>(
+    defaultSoundPreferences,
+  );
   const [audioReady, setAudioReady] = useState(false);
-  const [audioMessage, setAudioMessage] = useState("Suara perlu diaktifkan melalui tombol pada perangkat ini.");
-  const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [audioMessage, setAudioMessage] = useState(
+    "Suara perlu diaktifkan melalui tombol pada perangkat ini.",
+  );
+  const [permission, setPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("default");
   const [browserEnabled, setBrowserEnabled] = useState(false);
   const customSoundRef = useRef<StoredSound | null>(null);
 
@@ -49,16 +64,27 @@ export function NotificationAudioSettings({
       setPreferences(stored);
       getNotificationAudioManager().setVolume(stored.muted ? 0 : stored.volume);
       setAudioReady(getNotificationAudioManager().state === "running");
-      void loadCustomSound(userId).then((sound) => {
-        customSoundRef.current = sound;
-      }).catch(() => {
-        if (stored.customSoundName) setAudioMessage("File alarm tersimpan tidak dapat dibaca. Pilih ulang file alarm.");
-      });
-      const supported = "Notification" in window && "serviceWorker" in navigator && window.isSecureContext;
+      void loadCustomSound(userId)
+        .then((sound) => {
+          customSoundRef.current = sound;
+        })
+        .catch(() => {
+          if (stored.customSoundName)
+            setAudioMessage(
+              "File alarm tersimpan tidak dapat dibaca. Pilih ulang file alarm.",
+            );
+        });
+      const supported =
+        "Notification" in window &&
+        "serviceWorker" in navigator &&
+        window.isSecureContext;
       if (!supported) setPermission("unsupported");
       else {
         setPermission(Notification.permission);
-        setBrowserEnabled(localStorage.getItem(`mabeslink:browser-notice:${userId}`) === "on" && Notification.permission === "granted");
+        setBrowserEnabled(
+          localStorage.getItem(`mabeslink:browser-notice:${userId}`) === "on" &&
+            Notification.permission === "granted",
+        );
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -75,36 +101,59 @@ export function NotificationAudioSettings({
     manager.setVolume(preferences.muted ? 0 : preferences.volume);
     try {
       const ready = await manager.activate();
-      if (customSoundRef.current) await manager.setCustomSound(customSoundRef.current.data);
+      if (customSoundRef.current)
+        await manager.setCustomSound(customSoundRef.current.data);
       setAudioReady(ready);
       updatePreferences({ ...preferences, soundEnabled: true });
-      setAudioMessage(ready ? "Suara aktif pada tab ini." : "Browser belum mengizinkan suara.");
+      setAudioMessage(
+        ready
+          ? "Suara aktif pada tab ini."
+          : "Browser belum mengizinkan suara.",
+      );
       return ready;
     } catch {
       setAudioReady(false);
-      setAudioMessage("Suara dibatasi browser atau perangkat. Periksa izin situs dan volume perangkat.");
+      setAudioMessage(
+        "Suara dibatasi browser atau perangkat. Periksa izin situs dan volume perangkat.",
+      );
       return false;
     }
   };
 
-  const testSound = async () => {
+  const testSound = async (urgency: ReminderAlarmUrgency = "standard") => {
     getNotificationAudioManager().stop();
     const ready = await activateSound();
-    const played = ready && getNotificationAudioManager().play(1);
+    const played = ready && getNotificationAudioManager().play(1, urgency);
     setAudioMessage(
       !played
         ? "Tes belum berbunyi. Periksa izin audio dan volume perangkat."
         : preferences.muted || preferences.volume === 0
           ? "Tes dijalankan, tetapi pengaturan saat ini mute atau volume nol."
-          : "Nada tes diputar satu kali pada tab ini.",
+          : urgency === "appointment-due"
+            ? "Alarm tepat waktu janji diputar dengan pola mendesak minimal lima kali."
+            : "Nada pengingat awal diputar satu kali pada tab ini.",
     );
+  };
+
+  const deactivateSound = () => {
+    getNotificationAudioManager().stop();
+    updatePreferences({ ...preferences, soundEnabled: false });
+    setAudioReady(false);
+    setAudioMessage("Suara pengingat dimatikan pada perangkat ini.");
   };
 
   const selectCustomSound = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const supported = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/mp4", "audio/webm"];
+    const supported = [
+      "audio/mpeg",
+      "audio/wav",
+      "audio/x-wav",
+      "audio/ogg",
+      "audio/mp4",
+      "audio/webm",
+    ];
     if (!supported.includes(file.type) || file.size > 5 * 1024 * 1024) {
       toast("Pilih MP3, WAV, OGG, M4A, atau WebM maksimal 5 MB.", "error");
       return;
@@ -115,16 +164,37 @@ export function NotificationAudioSettings({
       const sound = { name: file.name.slice(0, 120), type: file.type, data };
       await saveCustomSound(userId, sound);
       customSoundRef.current = sound;
-      updatePreferences({ ...preferences, soundEnabled: true, customSoundName: sound.name });
+      updatePreferences({
+        ...preferences,
+        soundEnabled: true,
+        customSoundName: sound.name,
+      });
       setAudioReady(true);
-      setAudioMessage(`Alarm lokal siap (${duration.toFixed(1)} detik per putaran).`);
+      setAudioMessage(
+        `Alarm lokal siap (${duration.toFixed(1)} detik per putaran).`,
+      );
       toast("File alarm tersimpan pada browser ini.", "success");
     } catch (reason) {
-      toast(reason instanceof Error ? reason.message : "File audio tidak dapat diproses browser.", "error");
+      toast(
+        reason instanceof Error
+          ? reason.message
+          : "File audio tidak dapat diproses browser.",
+        "error",
+      );
     }
   };
 
   const removeCustomSound = async () => {
+    if (
+      !(await confirm({
+        title: "Hapus ringtone pilihan?",
+        description:
+          "File alarm lokal akan dihapus dari browser ini dan alarm bawaan akan digunakan.",
+        confirmLabel: "Hapus ringtone",
+        tone: "danger",
+      }))
+    )
+      return;
     try {
       await deleteCustomSound(userId);
       customSoundRef.current = null;
@@ -133,7 +203,10 @@ export function NotificationAudioSettings({
       setAudioMessage("Alarm bawaan digunakan.");
       toast("File alarm lokal dihapus.", "success");
     } catch (reason) {
-      toast(reason instanceof Error ? reason.message : "Alarm lokal gagal dihapus.", "error");
+      toast(
+        reason instanceof Error ? reason.message : "Alarm lokal gagal dihapus.",
+        "error",
+      );
     }
   };
 
@@ -151,7 +224,9 @@ export function NotificationAudioSettings({
       localStorage.setItem(`mabeslink:browser-notice:${userId}`, "on");
       window.dispatchEvent(new CustomEvent(NOTIFICATION_PREFERENCES_EVENT));
       setBrowserEnabled(true);
-      await navigator.serviceWorker.register("/mabeslink-notifications-sw.js", { scope: "/" }).catch(() => undefined);
+      await navigator.serviceWorker
+        .register("/mabeslink-notifications-sw.js", { scope: "/" })
+        .catch(() => undefined);
     }
   };
 
@@ -171,34 +246,100 @@ export function NotificationAudioSettings({
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-black">
-              {preferences.muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              {preferences.muted ? (
+                <VolumeX size={20} />
+              ) : (
+                <Volume2 size={20} />
+              )}
               Suara pengingat
             </h2>
-            <p className="mt-1 text-sm text-slate-500">Status perangkat: {soundStatus}.</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Status perangkat: {soundStatus}.
+            </p>
           </div>
-          <Button onClick={() => void activateSound()}>Aktifkan Suara</Button>
+          {preferences.soundEnabled && audioReady ? (
+            <Button variant="danger" onClick={deactivateSound}>
+              Matikan Suara
+            </Button>
+          ) : (
+            <Button variant="success" onClick={() => void activateSound()}>
+              Aktifkan Suara
+            </Button>
+          )}
         </div>
 
-        <div className="rounded-xl bg-blue-50 p-3 text-sm text-blue-900" title="Alarm berbunyi jika browser mengizinkan audio dan halaman aplikasi masih aktif.">
-          <p className="flex items-start gap-2"><Info className="mt-0.5 shrink-0" size={17} />Janji terkonfirmasi mengingatkan 30 menit sebelum dan tepat pada waktunya, termasuk pada jam senyap. Browser harus tetap membuka MABES LINK dan audio harus pernah diaktifkan pada perangkat ini.</p>
+        <div
+          className="rounded-xl bg-blue-50 p-3 text-sm text-blue-900"
+          title="Alarm berbunyi jika browser mengizinkan audio dan halaman aplikasi masih aktif."
+        >
+          <p className="flex items-start gap-2">
+            <Info className="mt-0.5 shrink-0" size={17} />
+            Janji terkonfirmasi mengingatkan mulai 30 menit sebelumnya, berulang
+            setiap 5 menit sampai tepat pada waktunya, termasuk pada jam senyap.
+            Tepat pada waktu janji digunakan pola alarm yang berbeda, lebih
+            tegas, dan minimal lima putaran. Browser harus tetap membuka MABES
+            LINK dan audio harus pernah diaktifkan pada perangkat ini.
+          </p>
         </div>
 
         <label className="block text-sm font-bold">
           Volume: {preferences.volume}%
-          <input aria-label="Volume suara" type="range" min="0" max="100" step="1" value={preferences.volume} onChange={(event) => updatePreferences({ ...preferences, volume: normalizeVolume(event.target.value) })} className="mt-2 h-11 w-full accent-blue-800" />
+          <input
+            aria-label="Volume suara"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={preferences.volume}
+            onChange={(event) =>
+              updatePreferences({
+                ...preferences,
+                volume: normalizeVolume(event.target.value),
+              })
+            }
+            className="mt-2 h-11 w-full accent-blue-800"
+          />
         </label>
         <label className="block text-sm font-bold">
           Pengulangan alarm
-          <select className="field mt-2" value={preferences.repeatCount} onChange={(event) => updatePreferences({ ...preferences, repeatCount: Number(event.target.value) })}>
-            {[1, 3, 5, 10, 20].map((value) => <option key={value} value={value}>{value} kali</option>)}
+          <select
+            className="field mt-2"
+            value={preferences.repeatCount}
+            onChange={(event) =>
+              updatePreferences({
+                ...preferences,
+                repeatCount: Number(event.target.value),
+              })
+            }
+          >
+            {[1, 3, 5, 10, 20].map((value) => (
+              <option key={value} value={value}>
+                {value} kali
+              </option>
+            ))}
           </select>
         </label>
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-bold">Bunyikan untuk</legend>
           {kinds.map(({ key, label }) => (
-            <label key={key} className="flex min-h-11 items-center gap-3 rounded-xl border px-3 text-sm">
-              <input type="checkbox" checked={preferences.reminderKinds[key]} onChange={(event) => updatePreferences({ ...preferences, reminderKinds: { ...preferences.reminderKinds, [key]: event.target.checked } })} />
+            <label
+              key={key}
+              className="flex min-h-11 items-center gap-3 rounded-xl border px-3 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={preferences.reminderKinds[key]}
+                onChange={(event) =>
+                  updatePreferences({
+                    ...preferences,
+                    reminderKinds: {
+                      ...preferences.reminderKinds,
+                      [key]: event.target.checked,
+                    },
+                  })
+                }
+              />
               {label}
             </label>
           ))}
@@ -206,30 +347,91 @@ export function NotificationAudioSettings({
 
         <div className="rounded-xl border border-dashed bg-slate-50 p-4">
           <p className="text-sm font-bold">Alarm pilihan sendiri</p>
-          <p className="mt-1 text-xs text-slate-500">Tersimpan hanya pada browser/perangkat ini. Maksimal 5 MB dan 30 detik per putaran.</p>
+          <p className="mt-1 text-xs text-slate-500">
+            Tersimpan hanya pada browser/perangkat ini. Maksimal 5 MB dan 30
+            detik per putaran.
+          </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border bg-white px-3 text-sm font-bold hover:bg-slate-50"><Upload size={16} />Pilih file<input type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/webm" className="sr-only" onChange={(event) => void selectCustomSound(event)} /></label>
-            {preferences.customSoundName ? <Button variant="ghost" onClick={() => void removeCustomSound()}><Trash2 size={16} />Hapus</Button> : null}
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border bg-white px-3 text-sm font-bold hover:bg-slate-50">
+              <Upload size={16} />
+              Pilih file
+              <input
+                type="file"
+                accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/webm"
+                className="sr-only"
+                onChange={(event) => void selectCustomSound(event)}
+              />
+            </label>
+            {preferences.customSoundName ? (
+              <Button variant="danger" onClick={() => void removeCustomSound()}>
+                <Trash2 size={16} />
+                Hapus
+              </Button>
+            ) : null}
           </div>
-          <p className="mt-2 break-all text-xs font-semibold text-slate-600">{preferences.customSoundName ?? "Alarm bawaan MABES LINK"}</p>
+          <p className="mt-2 break-all text-xs font-semibold text-slate-600">
+            {preferences.customSoundName ?? "Alarm bawaan MABES LINK"}
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void testSound()}>Tes Suara</Button>
-          <Button variant="outline" aria-pressed={preferences.muted} onClick={() => { getNotificationAudioManager().stop(); updatePreferences({ ...preferences, muted: !preferences.muted }); }}>{preferences.muted ? "Bunyikan" : "Mute"}</Button>
-          <Button variant="ghost" onClick={() => getNotificationAudioManager().stop()}>Hentikan suara</Button>
+          <Button variant="outline" onClick={() => void testSound()}>
+            Tes Suara
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void testSound("appointment-due")}
+          >
+            Tes alarm waktu janji
+          </Button>
+          <Button
+            variant="outline"
+            aria-pressed={preferences.muted}
+            onClick={() => {
+              getNotificationAudioManager().stop();
+              updatePreferences({ ...preferences, muted: !preferences.muted });
+            }}
+          >
+            {preferences.muted ? "Bunyikan" : "Mute"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => getNotificationAudioManager().stop()}
+          >
+            Hentikan suara
+          </Button>
         </div>
-        <p className="text-sm text-slate-600" role="status">{audioMessage}</p>
+        <p className="text-sm text-slate-600" role="status">
+          {audioMessage}
+        </p>
       </section>
 
       <section className="card p-5 sm:p-6">
         <h2 className="text-lg font-black">Notifikasi sistem laptop/HP</h2>
-        <p className="mt-1 text-sm text-slate-500">Izin browser terpisah dari audio. Notifikasi tidak dijanjikan ketika browser atau aplikasi ditutup.</p>
-        <Button className="mt-4" variant="outline" disabled={permission === "unsupported" || permission === "denied"} onClick={() => void toggleBrowserNotification()}>
+        <p className="mt-1 text-sm text-slate-500">
+          Izin browser terpisah dari audio. Notifikasi tidak dijanjikan ketika
+          browser atau aplikasi ditutup.
+        </p>
+        <Button
+          className="mt-4"
+          variant={browserEnabled ? "danger" : "success"}
+          disabled={permission === "unsupported" || permission === "denied"}
+          onClick={() => void toggleBrowserNotification()}
+        >
           {browserEnabled ? <BellRing size={16} /> : <Bell size={16} />}
-          {browserEnabled ? "Nonaktifkan notifikasi sistem" : permission === "unsupported" ? "Perlu HTTPS/localhost" : permission === "denied" ? "Izin ditolak browser" : "Aktifkan notifikasi sistem"}
+          {browserEnabled
+            ? "Nonaktifkan notifikasi sistem"
+            : permission === "unsupported"
+              ? "Perlu HTTPS/localhost"
+              : permission === "denied"
+                ? "Izin ditolak browser"
+                : "Aktifkan notifikasi sistem"}
         </Button>
-        <p className="mt-4 text-xs text-slate-500">Jam senyap aplikasi: {quietStart}–{quietEnd} WIB untuk pengingat umum. Janji terkonfirmasi tetap berbunyi sesuai jadwal. Pengaturan ini adalah konfigurasi internal, bukan penetapan SOP bank.</p>
+        <p className="mt-4 text-xs text-slate-500">
+          Jam senyap aplikasi: {quietStart}–{quietEnd} WIB untuk pengingat umum.
+          Janji terkonfirmasi tetap berbunyi sesuai jadwal. Pengaturan ini
+          adalah konfigurasi internal, bukan penetapan SOP bank.
+        </p>
       </section>
     </div>
   );

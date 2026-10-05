@@ -12,12 +12,14 @@ export type SoundPreferences = {
 };
 
 export type ReminderSoundKind = keyof SoundPreferences["reminderKinds"];
-export const NOTIFICATION_PREFERENCES_EVENT = "mabeslink:notification-preferences";
+export type ReminderAlarmUrgency = "standard" | "appointment-due";
+export const NOTIFICATION_PREFERENCES_EVENT =
+  "mabeslink:notification-preferences";
 
 export const defaultSoundPreferences: SoundPreferences = {
   soundEnabled: false,
   muted: false,
-  volume: 60,
+  volume: 100,
   repeatCount: 3,
   customSoundName: null,
   reminderKinds: {
@@ -29,10 +31,16 @@ export const defaultSoundPreferences: SoundPreferences = {
 
 export function normalizeVolume(value: unknown) {
   const number = Number(value);
-  return Number.isFinite(number) ? Math.min(100, Math.max(0, Math.round(number))) : 60;
+  return Number.isFinite(number)
+    ? Math.min(100, Math.max(0, Math.round(number)))
+    : 60;
 }
 
-export function isJakartaQuietTime(now: Date, quietStart: string, quietEnd: string) {
+export function isJakartaQuietTime(
+  now: Date,
+  quietStart: string,
+  quietEnd: string,
+) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Jakarta",
     hour: "2-digit",
@@ -40,7 +48,9 @@ export function isJakartaQuietTime(now: Date, quietStart: string, quietEnd: stri
     hourCycle: "h23",
   }).formatToParts(now);
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value ?? 0,
+  );
   const toMinutes = (value: string) => {
     const [h, m] = value.split(":").map(Number);
     return h * 60 + m;
@@ -49,24 +59,35 @@ export function isJakartaQuietTime(now: Date, quietStart: string, quietEnd: stri
   const start = toMinutes(quietStart);
   const end = toMinutes(quietEnd);
   if (start === end) return false;
-  return start < end ? current >= start && current < end : current >= start || current < end;
+  return start < end
+    ? current >= start && current < end
+    : current >= start || current < end;
 }
 
 export function loadSoundPreferences(userId: string): SoundPreferences {
   try {
-    const value = JSON.parse(localStorage.getItem(`mabeslink:sound:${userId}`) ?? "null") as Partial<SoundPreferences> | null;
-    return value ? {
-      soundEnabled: value.soundEnabled === true,
-      muted: value.muted === true,
-      volume: normalizeVolume(value.volume),
-      repeatCount: [1, 3, 5, 10, 20].includes(Number(value.repeatCount)) ? Number(value.repeatCount) : 3,
-      customSoundName: typeof value.customSoundName === "string" ? value.customSoundName : null,
-      reminderKinds: {
-        appointments: value.reminderKinds?.appointments !== false,
-        assignments: value.reminderKinds?.assignments !== false,
-        overdue: value.reminderKinds?.overdue !== false,
-      },
-    } : defaultSoundPreferences;
+    const value = JSON.parse(
+      localStorage.getItem(`mabeslink:sound:${userId}`) ?? "null",
+    ) as Partial<SoundPreferences> | null;
+    return value
+      ? {
+          soundEnabled: value.soundEnabled === true,
+          muted: value.muted === true,
+          volume: normalizeVolume(value.volume),
+          repeatCount: [1, 3, 5, 10, 20].includes(Number(value.repeatCount))
+            ? Number(value.repeatCount)
+            : 3,
+          customSoundName:
+            typeof value.customSoundName === "string"
+              ? value.customSoundName
+              : null,
+          reminderKinds: {
+            appointments: value.reminderKinds?.appointments !== false,
+            assignments: value.reminderKinds?.assignments !== false,
+            overdue: value.reminderKinds?.overdue !== false,
+          },
+        }
+      : defaultSoundPreferences;
   } catch {
     return defaultSoundPreferences;
   }
@@ -80,9 +101,14 @@ export function saveSoundPreferences(userId: string, value: SoundPreferences) {
 export function reminderSoundKind(type: string): ReminderSoundKind {
   if (type.startsWith("APPOINTMENT_") || type.startsWith("FOLLOW_UP_"))
     return "appointments";
-  if (type.includes("ASSIGNMENT") || type === "SERVICE_STATUS") return "assignments";
+  if (type.includes("ASSIGNMENT") || type === "SERVICE_STATUS")
+    return "assignments";
   if (type === "OVERDUE_DIGEST" || type.endsWith("_DUE")) return "overdue";
   return "appointments";
+}
+
+export function reminderAlarmUrgency(type: string): ReminderAlarmUrgency {
+  return type === "APPOINTMENT_ACTION_DUE" ? "appointment-due" : "standard";
 }
 
 export function shouldPlayReminderDuringQuietHours(type: string) {
@@ -101,7 +127,24 @@ export function shouldPlayReminderSound(
   );
 }
 
-export function claimAudioNotice(userId: string, notificationId: string, now = Date.now()) {
+export function shouldCatchUpAppointmentSound(
+  type: string,
+  readAt: string | null,
+  createdAt: string,
+  now = Date.now(),
+) {
+  if (readAt || !type.startsWith("APPOINTMENT_")) return false;
+  const created = new Date(createdAt).getTime();
+  return (
+    Number.isFinite(created) && created <= now && now - created <= 15 * 60_000
+  );
+}
+
+export function claimAudioNotice(
+  userId: string,
+  notificationId: string,
+  now = Date.now(),
+) {
   const key = `mabeslink:notice-claim:${userId}:${notificationId}`;
   try {
     const previous = Number(localStorage.getItem(key));
@@ -127,7 +170,8 @@ class NotificationAudioManager {
 
   setVolume(value: number) {
     this.volume = normalizeVolume(value) / 100;
-    if (this.master && this.context) this.master.gain.setValueAtTime(this.volume, this.context.currentTime);
+    if (this.master && this.context)
+      this.master.gain.setValueAtTime(this.volume, this.context.currentTime);
   }
 
   async activate() {
@@ -144,7 +188,11 @@ class NotificationAudioManager {
   async setCustomSound(data: ArrayBuffer) {
     await this.activate();
     const decoded = await this.context!.decodeAudioData(data.slice(0));
-    if (!Number.isFinite(decoded.duration) || decoded.duration <= 0 || decoded.duration > 30) {
+    if (
+      !Number.isFinite(decoded.duration) ||
+      decoded.duration <= 0 ||
+      decoded.duration > 30
+    ) {
       throw new Error("Durasi alarm harus antara 0 dan 30 detik.");
     }
     this.customBuffer = decoded;
@@ -160,20 +208,34 @@ class NotificationAudioManager {
     if (this.stopTimer != null) window.clearTimeout(this.stopTimer);
     this.stopTimer = null;
     for (const oscillator of this.active) {
-      try { oscillator.stop(); } catch { /* sudah berhenti */ }
+      try {
+        oscillator.stop();
+      } catch {
+        /* sudah berhenti */
+      }
       oscillator.disconnect();
     }
     this.active = [];
   }
 
-  play(repeatCount = 3) {
-    if (!this.context || !this.master || this.context.state !== "running") return false;
+  play(repeatCount = 3, urgency: ReminderAlarmUrgency = "standard") {
+    if (!this.context || !this.master || this.context.state !== "running")
+      return false;
     this.stop();
     const base = this.context.currentTime;
-    const repeats = Math.min(20, Math.max(1, Math.round(repeatCount)));
+    const configuredRepeats = Math.min(
+      20,
+      Math.max(1, Math.round(repeatCount)),
+    );
+    const repeats =
+      urgency === "appointment-due"
+        ? Math.max(5, configuredRepeats)
+        : configuredRepeats;
     let totalSeconds = 0;
     if (this.customBuffer) {
-      const spacing = this.customBuffer.duration + 0.35;
+      const spacing =
+        this.customBuffer.duration +
+        (urgency === "appointment-due" ? 0.12 : 0.35);
       for (let index = 0; index < repeats; index += 1) {
         const source = this.context.createBufferSource();
         source.buffer = this.customBuffer;
@@ -183,24 +245,42 @@ class NotificationAudioManager {
       }
       totalSeconds = repeats * spacing;
     } else {
+      const frequencies =
+        urgency === "appointment-due"
+          ? [988, 1318, 988, 1480]
+          : [880, 1046, 880];
+      const repeatSpacing = urgency === "appointment-due" ? 0.82 : 0.85;
+      const toneSpacing = urgency === "appointment-due" ? 0.16 : 0.22;
+      const toneDuration = urgency === "appointment-due" ? 0.14 : 0.16;
+      const peakGain = urgency === "appointment-due" ? 0.95 : 0.7;
       for (let repeat = 0; repeat < repeats; repeat += 1) {
-        [880, 1046, 880].forEach((frequency, index) => {
+        frequencies.forEach((frequency, index) => {
           const oscillator = this.context!.createOscillator();
           const envelope = this.context!.createGain();
-          const start = base + repeat * 0.85 + index * 0.22;
+          const start = base + repeat * repeatSpacing + index * toneSpacing;
+          oscillator.type = urgency === "appointment-due" ? "square" : "sine";
           oscillator.frequency.value = frequency;
           envelope.gain.setValueAtTime(0.0001, start);
-          envelope.gain.exponentialRampToValueAtTime(0.7, start + 0.025);
-          envelope.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+          envelope.gain.exponentialRampToValueAtTime(peakGain, start + 0.025);
+          envelope.gain.exponentialRampToValueAtTime(
+            0.0001,
+            start + toneDuration,
+          );
           oscillator.connect(envelope).connect(this.master!);
           oscillator.start(start);
-          oscillator.stop(start + 0.18);
+          oscillator.stop(start + toneDuration + 0.02);
           this.active.push(oscillator);
         });
       }
-      totalSeconds = repeats * 0.85;
+      totalSeconds = repeats * repeatSpacing;
     }
-    this.stopTimer = window.setTimeout(() => { this.active = []; this.stopTimer = null; }, Math.ceil(totalSeconds * 1_000) + 250);
+    this.stopTimer = window.setTimeout(
+      () => {
+        this.active = [];
+        this.stopTimer = null;
+      },
+      Math.ceil(totalSeconds * 1_000) + 250,
+    );
     return true;
   }
 }
@@ -217,10 +297,12 @@ function openAudioDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("mabeslink-device-settings", 1);
     request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains("audio")) request.result.createObjectStore("audio");
+      if (!request.result.objectStoreNames.contains("audio"))
+        request.result.createObjectStore("audio");
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(new Error("Penyimpanan alarm browser tidak tersedia."));
+    request.onerror = () =>
+      reject(new Error("Penyimpanan alarm browser tidak tersedia."));
   });
 }
 
@@ -230,7 +312,8 @@ export async function saveCustomSound(userId: string, sound: StoredSound) {
     const transaction = database.transaction("audio", "readwrite");
     transaction.objectStore("audio").put(sound, userId);
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(new Error("Alarm lokal gagal disimpan."));
+    transaction.onerror = () =>
+      reject(new Error("Alarm lokal gagal disimpan."));
   });
   database.close();
 }
@@ -238,8 +321,12 @@ export async function saveCustomSound(userId: string, sound: StoredSound) {
 export async function loadCustomSound(userId: string) {
   const database = await openAudioDatabase();
   const sound = await new Promise<StoredSound | null>((resolve, reject) => {
-    const request = database.transaction("audio", "readonly").objectStore("audio").get(userId);
-    request.onsuccess = () => resolve((request.result as StoredSound | undefined) ?? null);
+    const request = database
+      .transaction("audio", "readonly")
+      .objectStore("audio")
+      .get(userId);
+    request.onsuccess = () =>
+      resolve((request.result as StoredSound | undefined) ?? null);
     request.onerror = () => reject(new Error("Alarm lokal gagal dibaca."));
   });
   database.close();

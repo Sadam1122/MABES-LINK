@@ -1,4 +1,6 @@
 import {
+  AcquisitionMetricUnit,
+  AcquisitionStatus,
   AppointmentStatus,
   BatchType,
   CaseOrigin,
@@ -13,6 +15,12 @@ import {
   VisitOutcome,
 } from "@prisma/client";
 import { z } from "zod";
+
+import { mappingMarkerIcons } from "@/lib/mapping-icons";
+import {
+  acquisitionCategoryIds,
+  isAcquisitionProductInCategory,
+} from "@/lib/acquisition-products";
 
 const optionalTrimmed = (max: number) =>
   z.string().trim().max(max).optional().nullable();
@@ -70,6 +78,54 @@ export const prospectPatchSchema = z
       });
     }
   });
+
+export const mappingLocationPatchSchema = z
+  .object({
+    version: z.number().int().positive(),
+    latitude: z.number().min(-90).max(90).nullable(),
+    longitude: z.number().min(-180).max(180).nullable(),
+    locationLabel: optionalTrimmed(120),
+    locationSource: z
+      .enum(["MAP_PIN", "MANUAL_COORDINATES", "DEVICE_GEOLOCATION"])
+      .nullable(),
+    mappingMarkerIcon: z.enum(mappingMarkerIcons).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.latitude == null) !== (value.longitude == null))
+      ctx.addIssue({
+        code: "custom",
+        path: ["latitude"],
+        message: "Latitude dan longitude harus diisi bersama.",
+      });
+    if (value.latitude != null && value.locationSource == null)
+      ctx.addIssue({
+        code: "custom",
+        path: ["locationSource"],
+        message: "Sumber lokasi wajib untuk koordinat yang disimpan.",
+      });
+  });
+
+export const mappingLocationCreateSchema = z.object({
+  businessAlias: z.string().trim().min(2).max(120),
+  contactPic: optionalTrimmed(100).transform((value) => value || null),
+  need: z.string().trim().min(3).max(500),
+  assignedToId: z.string().min(1),
+  areaBlock: optionalTrimmed(100).transform((value) => value || null),
+  businessSector: optionalTrimmed(100).transform((value) => value || null),
+  addressHint: optionalTrimmed(220).transform((value) => value || null),
+  productNeeds: z.array(z.string().trim().min(2).max(80)).min(1).max(12),
+  locationLabel: optionalTrimmed(120).transform((value) => value || null),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  locationSource: z.enum([
+    "MAP_PIN",
+    "MANUAL_COORDINATES",
+    "DEVICE_GEOLOCATION",
+  ]),
+  mappingMarkerIcon: z.enum(mappingMarkerIcons),
+  usageEvidenceReference: z.string().trim().min(3).max(150),
+  usedAt: z.coerce.date(),
+});
 
 export const visitCreateSchema = z
   .object({
@@ -171,6 +227,78 @@ export const serviceCaseCreateSchema = z
       });
   });
 
+export const appointmentCreateSchema = z
+  .object({
+    acquisitionCategory: z.enum(acquisitionCategoryIds),
+    acquisitionProduct: z.string().trim().min(1).max(80),
+    acquisitionStatus: z
+      .nativeEnum(AcquisitionStatus)
+      .default(AcquisitionStatus.PROSPECT),
+    contactName: z.string().trim().min(2).max(100),
+    businessAlias: optionalTrimmed(120).transform((value) => value || null),
+    customerCif: optionalTrimmed(40)
+      .refine(
+        (value) => !value || /^[A-Za-z0-9-]+$/.test(value),
+        "CIF hanya boleh memuat huruf, angka, dan tanda hubung.",
+      )
+      .transform((value) => value || null),
+    customerAccount: optionalTrimmed(40)
+      .refine(
+        (value) => !value || /^\d{6,30}$/.test(value),
+        "Nomor rekening harus 6–30 digit.",
+      )
+      .transform((value) => value || null),
+    customerPhone: optionalTrimmed(30)
+      .refine(
+        (value) => !value || /^\+?[0-9][0-9\s()-]{7,29}$/.test(value),
+        "Nomor HP tidak valid.",
+      )
+      .transform((value) => value || null),
+    reason: z.string().trim().min(5).max(700),
+    nextAction: z.string().trim().min(3).max(300),
+    picIds: z.array(z.string().min(1)).min(1).max(10),
+    appointmentAt: z.coerce.date(),
+    targetValue: z.number().min(0).max(999_999_999_999_999).nullable(),
+    realizationValue: z.number().min(0).max(999_999_999_999_999).nullable(),
+    metricUnit: z.nativeEnum(AcquisitionMetricUnit).nullable(),
+    locationLabel: z.string().trim().min(2).max(120),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    locationSource: z.enum([
+      "MAP_PIN",
+      "MANUAL_COORDINATES",
+      "DEVICE_GEOLOCATION",
+    ]),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      !isAcquisitionProductInCategory(
+        value.acquisitionCategory,
+        value.acquisitionProduct,
+      )
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["acquisitionProduct"],
+        message: "Produk tidak sesuai dengan kategori yang dipilih.",
+      });
+    if (
+      (value.targetValue != null || value.realizationValue != null) &&
+      value.metricUnit == null
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["metricUnit"],
+        message: "Satuan wajib dipilih jika target atau realisasi diisi.",
+      });
+    if (new Set(value.picIds).size !== value.picIds.length)
+      ctx.addIssue({
+        code: "custom",
+        path: ["picIds"],
+        message: "PIC internal tidak boleh duplikat.",
+      });
+  });
+
 export const serviceCasePatchSchema = z
   .object({
     version: z.number().int().positive(),
@@ -182,6 +310,18 @@ export const serviceCasePatchSchema = z
     appointmentAt: z.coerce.date().optional().nullable(),
     waitReason: optionalTrimmed(500),
     escalationReason: optionalTrimmed(500),
+    acquisitionStatus: z.nativeEnum(AcquisitionStatus).optional(),
+    targetValue: z.number().min(0).max(999_999_999_999_999).nullable().optional(),
+    realizationValue: z
+      .number()
+      .min(0)
+      .max(999_999_999_999_999)
+      .nullable()
+      .optional(),
+    metricUnit: z.nativeEnum(AcquisitionMetricUnit).nullable().optional(),
+    customerCif: optionalTrimmed(40),
+    customerAccount: optionalTrimmed(40),
+    customerPhone: optionalTrimmed(30),
   })
   .superRefine((value, ctx) => {
     if (

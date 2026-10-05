@@ -11,8 +11,13 @@ const executablePath =
   process.env.BROWSER_PATH ??
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const baseURL = process.env.VISUAL_TEST_URL ?? "http://localhost:3100";
-if (!new URL(baseURL).hostname.match(/^(localhost|127\.0\.0\.1)$/)) throw new Error("Visual check hanya boleh menuju server lokal.");
-const connectionString = resolveDatabaseUrl({ ...process.env, DATABASE_PURPOSE: "testing", TEST_DATABASE_NAME: process.env.TEST_DATABASE_NAME ?? "mabeslink_test" });
+if (!new URL(baseURL).hostname.match(/^(localhost|127\.0\.0\.1)$/))
+  throw new Error("Visual check hanya boleh menuju server lokal.");
+const connectionString = resolveDatabaseUrl({
+  ...process.env,
+  DATABASE_PURPOSE: "testing",
+  TEST_DATABASE_NAME: process.env.TEST_DATABASE_NAME ?? "mabeslink_test",
+});
 const db = new PrismaClient({
   adapter: new PrismaPg({ connectionString }),
 });
@@ -20,20 +25,35 @@ const suffix = randomUUID().slice(0, 8);
 const email = `visual-${suffix}@example.invalid`;
 const password = `${randomBytes(18).toString("base64url")}Aa1!`;
 const userId = `visual-${suffix}`;
+const officerId = `visual-officer-${suffix}`;
 
 function createTestWav() {
   const sampleRate = 8_000;
   const sampleCount = 800;
   const output = Buffer.alloc(44 + sampleCount * 2);
-  output.write("RIFF", 0); output.writeUInt32LE(output.length - 8, 4); output.write("WAVEfmt ", 8);
-  output.writeUInt32LE(16, 16); output.writeUInt16LE(1, 20); output.writeUInt16LE(1, 22);
-  output.writeUInt32LE(sampleRate, 24); output.writeUInt32LE(sampleRate * 2, 28); output.writeUInt16LE(2, 32); output.writeUInt16LE(16, 34);
-  output.write("data", 36); output.writeUInt32LE(sampleCount * 2, 40);
-  for (let index = 0; index < sampleCount; index += 1) output.writeInt16LE(Math.round(Math.sin(index / 8) * 8_000), 44 + index * 2);
+  output.write("RIFF", 0);
+  output.writeUInt32LE(output.length - 8, 4);
+  output.write("WAVEfmt ", 8);
+  output.writeUInt32LE(16, 16);
+  output.writeUInt16LE(1, 20);
+  output.writeUInt16LE(1, 22);
+  output.writeUInt32LE(sampleRate, 24);
+  output.writeUInt32LE(sampleRate * 2, 28);
+  output.writeUInt16LE(2, 32);
+  output.writeUInt16LE(16, 34);
+  output.write("data", 36);
+  output.writeUInt32LE(sampleCount * 2, 40);
+  for (let index = 0; index < sampleCount; index += 1)
+    output.writeInt16LE(
+      Math.round(Math.sin(index / 8) * 8_000),
+      44 + index * 2,
+    );
   return output;
 }
 
 async function checkDialogsAndAudio(page: Page) {
+  const dismissActivation = page.getByRole("button", { name: "Nanti" });
+  if (await dismissActivation.isVisible()) await dismissActivation.click();
   const bell = page.getByRole("button", { name: /^Notifikasi/ });
   await bell.click();
   const notificationDropdown = page.getByRole("menu", {
@@ -54,14 +74,19 @@ async function checkDialogsAndAudio(page: Page) {
   await visualItem.getByRole("button", { name: "Lihat detail" }).click();
   await notificationDropdown.waitFor({ state: "hidden" });
   const detailDialog = page.getByRole("dialog", { name: "Pengingat visual" });
-  await detailDialog.getByRole("button", { name: "Tandai sudah dibaca" }).click();
+  await detailDialog
+    .getByRole("button", { name: "Tandai sudah dibaca" })
+    .click();
   await detailDialog
     .getByRole("button", { name: "Tutup", exact: true })
     .click();
   await detailDialog.waitFor({ state: "hidden" });
-  if (!(await bell.evaluate((node) => node === document.activeElement))) throw new Error("Fokus tidak kembali ke pemicu notifikasi.");
+  if (!(await bell.evaluate((node) => node === document.activeElement)))
+    throw new Error("Fokus tidak kembali ke pemicu notifikasi.");
 
-  await page.goto(`${baseURL}/notification-settings`, { waitUntil: "networkidle" });
+  await page.goto(`${baseURL}/notification-settings`, {
+    waitUntil: "networkidle",
+  });
   await page.getByRole("heading", { name: "Pengaturan Notifikasi" }).waitFor();
   await page.getByRole("button", { name: "Aktifkan Suara" }).click();
   const volume = page.getByLabel("Volume suara");
@@ -69,21 +94,30 @@ async function checkDialogsAndAudio(page: Page) {
     await volume.fill(value);
     await page.getByRole("button", { name: "Tes Suara" }).click();
   }
+  await page.getByRole("button", { name: "Tes alarm waktu janji" }).click();
+  await page.getByRole("button", { name: "Hentikan suara" }).click();
   await page.getByLabel("Pengulangan alarm").selectOption("20");
-  await page.locator('input[type="file"]').setInputFiles({ name: "alarm-test.wav", mimeType: "audio/wav", buffer: createTestWav() });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "alarm-test.wav",
+    mimeType: "audio/wav",
+    buffer: createTestWav(),
+  });
   await page.getByText("alarm-test.wav", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Mute", exact: true }).click();
 
   await page.goto(`${baseURL}/handovers`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Batch payroll" }).click();
   const batchDialog = page.getByRole("dialog", { name: "Batch payroll" });
-  await batchDialog.getByLabel("Judul batch").fill("Uji perubahan belum disimpan");
+  await batchDialog
+    .getByLabel("Judul batch")
+    .fill("Uji perubahan belum disimpan");
   await page.keyboard.press("Escape");
   const discard = page.getByRole("alertdialog", { name: "Buang perubahan" });
   await discard.waitFor();
   await page.keyboard.press("Escape");
   await discard.waitFor({ state: "hidden" });
-  if (!(await batchDialog.isVisible())) throw new Error("Escape pada konfirmasi seharusnya membatalkan penutupan.");
+  if (!(await batchDialog.isVisible()))
+    throw new Error("Escape pada konfirmasi seharusnya membatalkan penutupan.");
   await page.waitForTimeout(100);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Buang perubahan" }).click();
@@ -107,15 +141,41 @@ async function check(context: BrowserContext, name: string) {
   await page.locator("#password").fill(password);
   await page.getByRole("button", { name: /masuk/i }).click();
   await page.waitForURL("**/dashboard");
-  await page.goto(`${baseURL}/mapping`, { waitUntil: "networkidle" });
+  await page.goto(`${baseURL}/work`, { waitUntil: "networkidle" });
   await page
-    .getByRole("heading", { name: "Mapping" })
+    .getByRole("heading", { name: "Akuisisi Nasabah", exact: true })
     .waitFor();
+  if (await page.getByRole("button", { name: "Nanti" }).count())
+    throw new Error(`${name}: prompt aktivasi audio otomatis masih tampil.`);
+  await page.goto(`${baseURL}/mapping`, { waitUntil: "networkidle" });
+  await page.getByRole("heading", { name: "Mapping" }).waitFor();
   await page.locator(".leaflet-container").waitFor({ timeout: 15_000 });
   await page.getByLabel("Cari nama, toko, atau PIC").fill("uji filter");
   await page.getByLabel("Status akuisisi").selectOption("FOLLOW_UP");
   await page.getByLabel("Jadwal follow-up").selectOption("today");
   await page.getByRole("button", { name: "Reset filter" }).click();
+  await page.getByRole("button", { name: "Tambah lokasi" }).click();
+  const mappingDialog = page.getByRole("dialog", {
+    name: "Tambah lokasi mapping",
+  });
+  await mappingDialog.waitFor();
+  await mappingDialog.getByText("Kuliner", { exact: true }).click();
+  await mappingDialog.getByLabel("Latitude").fill("-6.1447000");
+  await mappingDialog.getByLabel("Longitude").fill("106.8182500");
+  await mappingDialog
+    .getByRole("button", { name: "Terapkan koordinat" })
+    .click();
+  await mappingDialog.getByText(/di dalam referensi batas/i).waitFor();
+  const dialogOverflow = await mappingDialog.evaluate(
+    (node) => node.scrollWidth > node.clientWidth + 1,
+  );
+  if (dialogOverflow)
+    throw new Error(
+      `${name}: dialog tambah lokasi memiliki overflow horizontal.`,
+    );
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Buang perubahan" }).click();
+  await mappingDialog.waitFor({ state: "hidden" });
   if (name.startsWith("mobile"))
     await page.getByRole("navigation", { name: "Navigasi seluler" }).waitFor();
   const overflow = await page.evaluate(
@@ -138,9 +198,16 @@ async function check(context: BrowserContext, name: string) {
       /tahap [123]|prototype|dummy|tombol seed|kredensial demo/i.test(text),
     );
   if (forbidden) throw new Error(`${name}: label pengembangan masih terlihat.`);
+  await page.goto(`${baseURL}/appointment-map`, { waitUntil: "networkidle" });
+  await page
+    .getByRole("heading", { name: "Mapping Janji", exact: true })
+    .waitFor();
+  await page.locator(".leaflet-container").waitFor({ timeout: 15_000 });
+  if (await page.getByRole("button", { name: "Nanti" }).count())
+    throw new Error(`${name}: prompt aktivasi audio otomatis masih tampil.`);
   if (name === "desktop-1440") await checkDialogsAndAudio(page);
   console.log(
-    `${name}: mapping tampil, peta tersedia, tanpa overflow horizontal/console error.`,
+    `${name}: mapping penggunaan dan mapping janji tampil tanpa overflow/console error.`,
   );
   await page.close();
 }
@@ -167,6 +234,18 @@ async function main() {
       },
     },
   });
+  await db.user.create({
+    data: {
+      id: officerId,
+      name: "Petugas Mapping Visual",
+      email: `visual-officer-${suffix}@example.invalid`,
+      emailVerified: true,
+      active: true,
+      isTest: false,
+      role: Role.OUT_BRANCH,
+      branchId: branch.id,
+    },
+  });
   await db.notification.create({
     data: {
       recipientId: userId,
@@ -187,7 +266,8 @@ async function main() {
       { width: 390, height: 844, name: "mobile-390" },
       { width: 360, height: 800, name: "mobile-360" },
     ].entries()) {
-      if (index === 3) await new Promise((resolve) => setTimeout(resolve, 10_500));
+      if (index === 3)
+        await new Promise((resolve) => setTimeout(resolve, 10_500));
       await check(
         await browser.newContext({
           viewport: { width: viewport.width, height: viewport.height },
@@ -199,7 +279,7 @@ async function main() {
     }
   } finally {
     await browser?.close();
-    await db.user.deleteMany({ where: { id: userId, isTest: true } });
+    await db.user.deleteMany({ where: { id: { in: [userId, officerId] } } });
     await db.$disconnect();
   }
 }

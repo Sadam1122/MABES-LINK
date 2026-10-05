@@ -11,12 +11,15 @@ export function BrandLogo({
 }) {
   return (
     <Image
-      src="/Gambar/logo.png"
+      src="/Gambar/logo-white.png"
       alt="MABES LINK"
       width={2172}
       height={724}
       sizes={sizes}
-      className={cn("h-auto w-full object-contain", className)}
+      className={cn(
+        "h-auto w-full rounded-lg bg-brand-deep p-2 object-contain",
+        className,
+      )}
     />
   );
 }

@@ -1,7 +1,27 @@
-import { apiError, jsonOk } from "@/lib/api";
+import { apiError, jsonOk, parseJson } from "@/lib/api";
 import { requireActor } from "@/lib/session";
+import { createMappingLocation } from "@/lib/services/mapping";
 import { listMappingProspects } from "@/lib/services/visits";
-import { paginationSchema } from "@/lib/validation";
+import {
+  mappingLocationCreateSchema,
+  paginationSchema,
+} from "@/lib/validation";
+
+export async function POST(request: Request) {
+  try {
+    const actor = await requireActor();
+    return jsonOk(
+      await createMappingLocation(
+        actor,
+        mappingLocationCreateSchema.parse(await parseJson(request)),
+        request.headers.get("x-request-id"),
+      ),
+      { status: 201 },
+    );
+  } catch (error) {
+    return apiError(error);
+  }
+}
 
 export async function GET(request: Request) {
   try {

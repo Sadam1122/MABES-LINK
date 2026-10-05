@@ -31,11 +31,18 @@ import {
   validateAndEncodeLocationImage,
 } from "@/lib/services/location-photos";
 import {
+  archiveServiceCase,
+  createAppointment,
   createServiceCase,
   getServiceCase,
+  listAppointmentLocations,
   listServiceCases,
   updateServiceCase,
 } from "@/lib/services/service-cases";
+import {
+  createMappingLocation,
+  updateMappingLocation,
+} from "@/lib/services/mapping";
 import { updateProspect } from "@/lib/services/prospects";
 import { prospectPatchSchema } from "@/lib/validation";
 
@@ -77,6 +84,7 @@ const supervisor: Actor = {
   branchId,
 };
 const caseIds: string[] = [];
+const createdProspectIds: string[] = [];
 const photoIds: string[] = [];
 
 describe("operasional ServiceCase, lokasi, dan storage privat", () => {
@@ -138,7 +146,12 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     await db.locationPhoto.deleteMany({ where: { prospectId } });
     await db.serviceCase.deleteMany({ where: { id: { in: caseIds } } });
     await db.auditLog.deleteMany({ where: { branchId } });
-    await db.prospect.deleteMany({ where: { id: prospectId } });
+    await db.usageVerification.deleteMany({
+      where: { prospectId: { in: createdProspectIds } },
+    });
+    await db.prospect.deleteMany({
+      where: { id: { in: [prospectId, ...createdProspectIds] } },
+    });
     await db.user.deleteMany({
       where: {
         id: { in: [actorA.id, actorB.id, actorOtherBranch.id, supervisor.id] },
@@ -174,6 +187,37 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     expect(updated.longitude?.toString()).toBe("0");
     expect(updated.locationUpdatedAt).toBeInstanceOf(Date);
     expect(updated.locationSource).toBe("MANUAL_COORDINATES");
+    const sameBranchUpdate = await updateMappingLocation(actorB, prospectId, {
+      version: updated.version,
+      latitude: -6.1447,
+      longitude: 106.81825,
+      locationLabel: "Mapping bersama cabang",
+      locationSource: "MAP_PIN",
+    });
+    expect(sameBranchUpdate.locationLabel).toBe("Mapping bersama cabang");
+    const mappingAudit = await db.auditLog.findFirstOrThrow({
+      where: {
+        entityType: "Prospect",
+        entityId: prospectId,
+        action: "MAPPING_LOCATION_UPDATED",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { actorId: true, actorName: true, actorRole: true },
+    });
+    expect(mappingAudit).toEqual({
+      actorId: actorB.id,
+      actorName: actorB.name,
+      actorRole: Role.OUT_BRANCH,
+    });
+    await expect(
+      updateMappingLocation(actorOtherBranch, prospectId, {
+        version: sameBranchUpdate.version,
+        latitude: -6.1447,
+        longitude: 106.81825,
+        locationLabel: "Tidak boleh tersimpan",
+        locationSource: "MAP_PIN",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
 
     const location = new URL(
       googleMapsLocationUrl({ latitude: -6.1501234, longitude: 106.8205678 }),
@@ -202,6 +246,57 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     expect(geolocationErrorMessage(1)).toContain("ditolak");
     expect(geolocationErrorMessage(2)).toContain("tidak tersedia");
     expect(geolocationErrorMessage(3)).toContain("batas waktu");
+  });
+
+  it("menambah lokasi mapping terverifikasi dengan ikon dan menolak PIC lintas cabang", async () => {
+    const mapped = await createMappingLocation(actorB, {
+      businessAlias: "Toko Mapping Samaran",
+      contactPic: null,
+      need: "Menggunakan QRIS untuk transaksi usaha",
+      assignedToId: actorB.id,
+      areaBlock: "Blok Uji",
+      businessSector: "Retail",
+      addressHint: "Dekat persimpangan uji",
+      productNeeds: ["QRIS"],
+      locationLabel: "Toko Uji Mapping",
+      latitude: -6.1447,
+      longitude: 106.81825,
+      locationSource: "MAP_PIN",
+      mappingMarkerIcon: "MARKET",
+      usageEvidenceReference: `MAP-EVIDENCE-${suffix}`,
+      usedAt: new Date("2026-10-05T00:00:00+07:00"),
+    });
+    createdProspectIds.push(mapped.id);
+    expect(mapped.mappingMarkerIcon).toBe("MARKET");
+    expect(mapped.branchId).toBe(branchId);
+    expect(mapped.contactPic).toBe("Tidak dicantumkan");
+    await expect(
+      db.usageVerification.findFirstOrThrow({
+        where: { prospectId: mapped.id, status: "VERIFIED" },
+      }),
+    ).resolves.toMatchObject({
+      evidenceReference: `MAP-EVIDENCE-${suffix}`,
+      recordedById: actorB.id,
+    });
+    await expect(
+      createMappingLocation(actorOtherBranch, {
+        businessAlias: "Tidak Boleh Tersimpan",
+        contactPic: null,
+        need: "Uji pembatasan cabang",
+        assignedToId: actorB.id,
+        areaBlock: null,
+        businessSector: null,
+        addressHint: null,
+        productNeeds: ["QRIS"],
+        locationLabel: null,
+        latitude: 0,
+        longitude: 0,
+        locationSource: "MANUAL_COORDINATES",
+        mappingMarkerIcon: "STORE",
+        usageEvidenceReference: `MAP-DENIED-${suffix}`,
+        usedAt: new Date(),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ASSIGNEE" });
   });
 
   it("mewajibkan PIC mengakui pekerjaan dan menolak akses lintas penugasan/cabang", async () => {
@@ -287,6 +382,76 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     expect(accepted.acceptedAt).toBeInstanceOf(Date);
   });
 
+  it("membuat janji tanpa referensi manual, mengingatkan beberapa PIC, memetakan, dan soft-delete", async () => {
+    const appointment = await createAppointment(actorA, {
+      acquisitionCategory: "LIVIN_MERCHANT",
+      acquisitionProduct: "LIVIN_MERCHANT_QRIS",
+      acquisitionStatus: "PROSPECT",
+      customerCif: null,
+      customerAccount: null,
+      customerPhone: null,
+      nextAction: "Hubungi kontak untuk memastikan agenda janji",
+      targetValue: null,
+      realizationValue: null,
+      metricUnit: null,
+      contactName: "Kontak Lokasi Samaran",
+      businessAlias: "Toko Janji Multipic",
+      reason: "Pertemuan kebutuhan transaksi usaha samaran",
+      picIds: [actorA.id, actorB.id],
+      appointmentAt: new Date(Date.now() + 86_400_000),
+      locationLabel: "Ruko samaran pintu kiri",
+      latitude: -6.1451,
+      longitude: 106.8179,
+      locationSource: "MANUAL_COORDINATES",
+    });
+    caseIds.push(appointment.id);
+    createdProspectIds.push(appointment.prospectId);
+    expect(
+      await db.serviceCaseParticipant.count({
+        where: { serviceCaseId: appointment.id },
+      }),
+    ).toBe(2);
+    expect(
+      await db.outboxJob.count({
+        where: {
+          serviceCaseId: appointment.id,
+          status: OutboxStatus.PENDING,
+        },
+      }),
+    ).toBe(14);
+    expect((await getServiceCase(actorB, appointment.id)).id).toBe(
+      appointment.id,
+    );
+    expect(
+      (await listAppointmentLocations(actorB)).some(
+        (item) => item.id === appointment.id,
+      ),
+    ).toBe(true);
+    await archiveServiceCase(actorA, appointment.id, appointment.version);
+    expect(
+      await db.outboxJob.count({
+        where: {
+          serviceCaseId: appointment.id,
+          status: { in: [OutboxStatus.PENDING, OutboxStatus.PROCESSING] },
+        },
+      }),
+    ).toBe(0);
+    await expect(getServiceCase(actorA, appointment.id)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(
+      await db.auditLog.findFirst({
+        where: {
+          entityType: "ServiceCase",
+          entityId: appointment.id,
+          action: "SERVICE_CASE_ARCHIVED",
+          actorId: actorA.id,
+          actorRole: Role.OUT_BRANCH,
+        },
+      }),
+    ).not.toBeNull();
+  });
+
   it("reschedule, pergantian PIC, konfirmasi, dan selesai membatalkan reminder lama", async () => {
     const item = await createServiceCase(supervisor, {
       prospectId,
@@ -331,14 +496,14 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     });
     expect(confirmed.appointmentStatus).toBe(AppointmentStatus.CONFIRMED);
     const confirmedJobs = await db.outboxJob.findMany({
-        where: {
-          serviceCaseId: item.id,
-          scheduleVersion: confirmed.version,
-          status: OutboxStatus.PENDING,
-        },
-        orderBy: { runAt: "asc" },
+      where: {
+        serviceCaseId: item.id,
+        scheduleVersion: confirmed.version,
+        status: OutboxStatus.PENDING,
+      },
+      orderBy: { runAt: "asc" },
     });
-    expect(confirmedJobs).toHaveLength(2);
+    expect(confirmedJobs).toHaveLength(7);
     expect(confirmedJobs.every((job) => job.recipientId === actorB.id)).toBe(
       true,
     );
@@ -348,6 +513,18 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     const preJob = confirmedJobs.find(
       (job) => job.type === OutboxJobType.APPOINTMENT_PRE_DUE,
     );
+    const preJobs = confirmedJobs.filter(
+      (job) => job.type === OutboxJobType.APPOINTMENT_PRE_DUE,
+    );
+    expect(preJobs).toHaveLength(6);
+    expect(
+      preJobs
+        .slice(1)
+        .every(
+          (job, index) =>
+            job.runAt.getTime() - preJobs[index].runAt.getTime() === 5 * 60_000,
+        ),
+    ).toBe(true);
     expect(dueJob?.runAt.getTime()).toBe(confirmed.appointmentAt?.getTime());
     expect(preJob?.runAt.getTime()).toBe(
       (confirmed.appointmentAt?.getTime() ?? 0) - 30 * 60_000,
@@ -446,7 +623,10 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     expect(photo.storageKey.endsWith(".webp")).toBe(true);
     const loaded = await getLocationPhoto(actorA, photo.id);
     expect(loaded.data.length).toBeGreaterThan(0);
-    await expect(getLocationPhoto(actorB, photo.id)).rejects.toMatchObject({
+    expect((await getLocationPhoto(actorB, photo.id)).photo.id).toBe(photo.id);
+    await expect(
+      getLocationPhoto(actorOtherBranch, photo.id),
+    ).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
     const replacement = await sharp({
@@ -470,6 +650,26 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     await expect(getLocationPhoto(actorA, photo.id)).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+    const photoNotices = await db.notification.findMany({
+      where: {
+        recipientId: actorA.id,
+        title: {
+          in: [
+            "Foto mapping ditambahkan",
+            "Foto mapping diganti",
+            "Foto mapping dihapus",
+          ],
+        },
+      },
+      select: { title: true },
+    });
+    expect(new Set(photoNotices.map((notice) => notice.title))).toEqual(
+      new Set([
+        "Foto mapping ditambahkan",
+        "Foto mapping diganti",
+        "Foto mapping dihapus",
+      ]),
+    );
   });
 
   it("membentuk email uji tanpa identitas nasabah melalui transport dry-run", async () => {

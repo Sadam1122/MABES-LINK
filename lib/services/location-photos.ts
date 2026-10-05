@@ -4,13 +4,19 @@ import path from "node:path";
 import { Role } from "@prisma/client";
 import sharp from "sharp";
 import { writeAudit } from "@/lib/audit";
-import { prospectScope } from "@/lib/authorization";
+import { mappingProspectScope } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
+import { createAssignmentNotification } from "@/lib/notifications";
 import type { Actor } from "@/lib/session";
 
 const allowedFormats = new Set(["jpeg", "png", "webp"]);
-const editableRoles: Role[] = [Role.OUT_BRANCH, Role.SUPERVISOR, Role.ADMIN];
+const editableRoles: Role[] = [
+  Role.OUT_BRANCH,
+  Role.CS,
+  Role.SUPERVISOR,
+  Role.ADMIN,
+];
 
 export function privateStorageRoot() {
   return path.resolve(
@@ -101,7 +107,7 @@ export async function addLocationPhoto(
       "FORBIDDEN",
     );
   const prospect = await db.prospect.findFirst({
-    where: { id: prospectId, AND: [prospectScope(actor)] },
+    where: { id: prospectId, AND: [mappingProspectScope(actor)] },
     include: { _count: { select: { locationPhotos: true } } },
   });
   if (!prospect)
@@ -148,6 +154,15 @@ export async function addLocationPhoto(
         },
         requestId,
       });
+      await createAssignmentNotification(tx, {
+        recipientId: prospect.assignedToId,
+        branchId: prospect.branchId,
+        type: "SERVICE_STATUS",
+        title: "Foto mapping ditambahkan",
+        message: `${prospect.internalCode} memiliki foto lokasi baru.`,
+        link: "/mapping",
+        dedupKey: `location-photo-added:${photo.id}`,
+      });
       return photo;
     });
   } catch (error) {
@@ -158,7 +173,7 @@ export async function addLocationPhoto(
 
 export async function getLocationPhoto(actor: Actor, id: string) {
   const photo = await db.locationPhoto.findFirst({
-    where: { id, prospect: prospectScope(actor) },
+    where: { id, prospect: mappingProspectScope(actor) },
   });
   if (!photo) throw new AppError("Gambar tidak ditemukan.", 404, "NOT_FOUND");
   try {
@@ -189,8 +204,12 @@ export async function deleteLocationPhoto(
       "FORBIDDEN",
     );
   const photo = await db.locationPhoto.findFirst({
-    where: { id, prospect: prospectScope(actor) },
-    include: { prospect: { select: { branchId: true } } },
+    where: { id, prospect: mappingProspectScope(actor) },
+    include: {
+      prospect: {
+        select: { branchId: true, assignedToId: true, internalCode: true },
+      },
+    },
   });
   if (!photo) throw new AppError("Gambar tidak ditemukan.", 404, "NOT_FOUND");
   await db.$transaction(async (tx) => {
@@ -203,6 +222,15 @@ export async function deleteLocationPhoto(
       requestId,
     });
     await tx.locationPhoto.delete({ where: { id } });
+    await createAssignmentNotification(tx, {
+      recipientId: photo.prospect.assignedToId,
+      branchId: photo.prospect.branchId,
+      type: "SERVICE_STATUS",
+      title: "Foto mapping dihapus",
+      message: `${photo.prospect.internalCode} memiliki perubahan foto lokasi.`,
+      link: "/mapping",
+      dedupKey: `location-photo-deleted:${id}:${photo.checksum}`,
+    });
   });
   await rm(storagePath(photo.storageKey), { force: true });
 }
@@ -220,8 +248,17 @@ export async function replaceLocationPhoto(
       "FORBIDDEN",
     );
   const current = await db.locationPhoto.findFirst({
-    where: { id, prospect: prospectScope(actor) },
-    include: { prospect: { select: { id: true, branchId: true } } },
+    where: { id, prospect: mappingProspectScope(actor) },
+    include: {
+      prospect: {
+        select: {
+          id: true,
+          branchId: true,
+          assignedToId: true,
+          internalCode: true,
+        },
+      },
+    },
   });
   if (!current) throw new AppError("Gambar tidak ditemukan.", 404, "NOT_FOUND");
   const encoded = await validateAndEncodeLocationImage(
@@ -253,6 +290,15 @@ export async function replaceLocationPhoto(
         before: { storageKey: current.storageKey, checksum: current.checksum },
         after: { storageKey: nextKey, checksum: encoded.checksum },
         requestId,
+      });
+      await createAssignmentNotification(tx, {
+        recipientId: current.prospect.assignedToId,
+        branchId: current.prospect.branchId,
+        type: "SERVICE_STATUS",
+        title: "Foto mapping diganti",
+        message: `${current.prospect.internalCode} memiliki perubahan foto lokasi.`,
+        link: "/mapping",
+        dedupKey: `location-photo-replaced:${id}:${encoded.checksum}`,
       });
       return photo;
     });

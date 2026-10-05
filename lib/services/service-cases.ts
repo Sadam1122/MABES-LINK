@@ -1,4 +1,5 @@
 import {
+  AcquisitionStatus,
   AppointmentStatus,
   Prisma,
   Role,
@@ -7,6 +8,10 @@ import {
 import type { z } from "zod";
 
 import { writeAudit } from "@/lib/audit";
+import {
+  getAcquisitionCategory,
+  getAcquisitionProduct,
+} from "@/lib/acquisition-products";
 import {
   prospectScope,
   requireBranch,
@@ -22,6 +27,7 @@ import {
 import type { Actor } from "@/lib/session";
 import { makeCode } from "@/lib/utils";
 import type {
+  appointmentCreateSchema,
   paginationSchema,
   serviceCaseCreateSchema,
   serviceCasePatchSchema,
@@ -31,9 +37,12 @@ import { assertServiceCaseTransition } from "@/lib/workflow";
 type PageInput = z.infer<typeof paginationSchema> & {
   status?: ServiceCaseStatus;
   appointmentStatus?: AppointmentStatus;
+  acquisitionStatus?: AcquisitionStatus;
+  acquisitionCategory?: string;
   overdue?: boolean;
 };
 type CreateInput = z.infer<typeof serviceCaseCreateSchema>;
+type AppointmentCreateInput = z.infer<typeof appointmentCreateSchema>;
 type PatchInput = z.infer<typeof serviceCasePatchSchema>;
 
 const include = {
@@ -58,6 +67,10 @@ const include = {
     },
   },
   pic: { select: { id: true, name: true, role: true } },
+  participants: {
+    include: { user: { select: { id: true, name: true, role: true } } },
+    orderBy: { createdAt: "asc" as const },
+  },
   acceptedBy: { select: { id: true, name: true } },
 } as const;
 
@@ -68,6 +81,12 @@ export async function listServiceCases(actor: Actor, input: PageInput) {
       input.status ? { status: input.status } : {},
       input.appointmentStatus
         ? { appointmentStatus: input.appointmentStatus }
+        : {},
+      input.acquisitionStatus
+        ? { acquisitionStatus: input.acquisitionStatus }
+        : {},
+      input.acquisitionCategory
+        ? { acquisitionCategory: input.acquisitionCategory }
         : {},
       input.overdue
         ? {
@@ -88,8 +107,24 @@ export async function listServiceCases(actor: Actor, input: PageInput) {
               { code: { contains: input.search, mode: "insensitive" } },
               { title: { contains: input.search, mode: "insensitive" } },
               {
+                acquisitionProduct: {
+                  contains: input.search,
+                  mode: "insensitive",
+                },
+              },
+              {
                 prospect: {
                   internalCode: { contains: input.search, mode: "insensitive" },
+                },
+              },
+              {
+                prospect: {
+                  businessAlias: { contains: input.search, mode: "insensitive" },
+                },
+              },
+              {
+                prospect: {
+                  contactPic: { contains: input.search, mode: "insensitive" },
                 },
               },
               {
@@ -104,16 +139,14 @@ export async function listServiceCases(actor: Actor, input: PageInput) {
     ],
   };
   const skip = (input.page - 1) * input.pageSize;
-  const [items, total] = await db.$transaction([
-    db.serviceCase.findMany({
+  const items = await db.serviceCase.findMany({
       where,
       include,
       orderBy: [{ status: "asc" }, { dueAt: "asc" }],
       skip,
       take: input.pageSize,
-    }),
-    db.serviceCase.count({ where }),
-  ]);
+  });
+  const total = await db.serviceCase.count({ where });
   return {
     items,
     pagination: {
@@ -140,6 +173,53 @@ export async function getServiceCase(actor: Actor, id: string) {
       "NOT_FOUND",
     );
   return item;
+}
+
+export async function listAppointmentLocations(actor: Actor) {
+  return db.serviceCase.findMany({
+    where: {
+      AND: [
+        serviceCaseScope(actor),
+        { appointmentAt: { not: null } },
+        {
+          prospect: {
+            latitude: { not: null },
+            longitude: { not: null },
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      code: true,
+      title: true,
+      status: true,
+      appointmentStatus: true,
+      appointmentAt: true,
+      dueAt: true,
+      prospect: {
+        select: {
+          businessAlias: true,
+          contactPic: true,
+          locationLabel: true,
+          latitude: true,
+          longitude: true,
+          locationPhotos: {
+            select: { id: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+      },
+      pic: { select: { id: true, name: true } },
+      participants: {
+        select: { user: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+    orderBy: { appointmentAt: "asc" },
+    take: 500,
+  });
 }
 
 export async function createServiceCase(
@@ -257,6 +337,9 @@ export async function createServiceCase(
         sourceReference: input.sourceReference,
       },
     });
+    await tx.serviceCaseParticipant.create({
+      data: { serviceCaseId: item.id, userId: item.picId },
+    });
     await scheduleServiceCaseJobs(tx, item, branchId);
     await createAssignmentNotification(tx, {
       recipientId: item.picId,
@@ -285,6 +368,153 @@ export async function createServiceCase(
   });
 }
 
+export async function createAppointment(
+  actor: Actor,
+  input: AppointmentCreateInput,
+  requestId?: string | null,
+) {
+  if (input.appointmentAt.getTime() <= Date.now())
+    throw new AppError(
+      "Waktu janji harus berada setelah waktu sekarang.",
+      422,
+      "APPOINTMENT_TIME_INVALID",
+    );
+  const pics = await db.user.findMany({
+    where: {
+      id: { in: input.picIds },
+      active: true,
+      isTest: false,
+      role: { in: [Role.OUT_BRANCH, Role.CS] },
+      branchId: { not: null },
+    },
+    select: { id: true, branchId: true },
+  });
+  if (pics.length !== input.picIds.length)
+    throw new AppError(
+      "Seluruh PIC harus merupakan akun CS/OUTBRANCH aktif.",
+      422,
+      "INVALID_ASSIGNEE",
+    );
+  const branchIds = new Set(pics.map((pic) => pic.branchId));
+  if (branchIds.size !== 1)
+    throw new AppError(
+      "Seluruh PIC harus berada pada cabang yang sama.",
+      422,
+      "INVALID_ASSIGNEE_BRANCH",
+    );
+  const branchId = pics[0].branchId!;
+  if (actor.role !== Role.ADMIN && actor.branchId !== branchId)
+    throw new AppError(
+      "PIC berada di luar cabang Anda.",
+      403,
+      "FORBIDDEN",
+    );
+  const primaryPicId = input.picIds[0];
+  const category = getAcquisitionCategory(input.acquisitionCategory);
+  const product = getAcquisitionProduct(
+    input.acquisitionCategory,
+    input.acquisitionProduct,
+  );
+  if (!category || !product)
+    throw new AppError(
+      "Kategori atau produk akuisisi tidak valid.",
+      422,
+      "INVALID_ACQUISITION_PRODUCT",
+    );
+
+  return db.$transaction(async (tx) => {
+    const internalCode = makeCode("PR-11539");
+    const prospect = await tx.prospect.create({
+      data: {
+        internalCode,
+        businessAlias: input.businessAlias ?? "Usaha belum dicantumkan",
+        need: input.reason,
+        contactPic: input.contactName,
+        branchId,
+        assignedToId: primaryPicId,
+        createdById: actor.id,
+        locationLabel: input.locationLabel,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        locationSource: input.locationSource,
+        locationUpdatedAt: new Date(),
+        productNeeds: [product.label],
+      },
+    });
+    const item = await tx.serviceCase.create({
+      data: {
+        code: makeCode("ML-11539"),
+        branchId,
+        prospectId: prospect.id,
+        origin: actor.role === Role.CS ? "IN_BRANCH" : "OUT_BRANCH",
+        status: ServiceCaseStatus.ASSIGNED,
+        title: `${product.label} · ${input.businessAlias ?? internalCode}`,
+        description: input.reason,
+        picId: primaryPicId,
+        createdById: actor.id,
+        nextAction: input.nextAction,
+        dueAt: input.appointmentAt,
+        appointmentStatus: AppointmentStatus.CONFIRMED,
+        appointmentAt: input.appointmentAt,
+        sourceSystem: "MABES_LINK",
+        acquisitionCategory: category.id,
+        acquisitionProduct: product.id,
+        acquisitionStatus: input.acquisitionStatus,
+        targetValue: input.targetValue,
+        realizationValue: input.realizationValue,
+        metricUnit: input.metricUnit,
+        customerCif: input.customerCif,
+        customerAccount: input.customerAccount,
+        customerPhone: input.customerPhone,
+      },
+    });
+    await tx.serviceCaseParticipant.createMany({
+      data: input.picIds.map((userId) => ({ serviceCaseId: item.id, userId })),
+      skipDuplicates: true,
+    });
+    await scheduleServiceCaseJobs(tx, item, branchId);
+    for (const recipientId of input.picIds) {
+      await createAssignmentNotification(tx, {
+        recipientId,
+        branchId,
+        type: "SERVICE_ASSIGNMENT",
+        title: "Janji akuisisi baru",
+        message: `${item.code} ditugaskan kepada Anda sebagai PIC internal.`,
+        link: `/work/${item.id}`,
+        dedupKey: `service-assignment:${item.id}:${recipientId}:v${item.version}`,
+        serviceCaseId: item.id,
+      });
+    }
+    await writeAudit(tx, actor, {
+      entityType: "Prospect",
+      entityId: prospect.id,
+      action: "APPOINTMENT_PROSPECT_CREATED",
+      branchId,
+      after: { internalCode, assignedToId: primaryPicId },
+      requestId,
+    });
+    await writeAudit(tx, actor, {
+      entityType: "ServiceCase",
+      entityId: item.id,
+      action: "APPOINTMENT_CREATED_AND_ASSIGNED",
+      branchId,
+      after: {
+        code: item.code,
+        appointmentStatus: item.appointmentStatus,
+        participantIds: input.picIds,
+        acquisitionCategory: category.id,
+        acquisitionProduct: product.id,
+        acquisitionStatus: item.acquisitionStatus,
+        targetValue: item.targetValue,
+        realizationValue: item.realizationValue,
+        metricUnit: item.metricUnit,
+      },
+      requestId,
+    });
+    return { ...item, prospectId: prospect.id };
+  });
+}
+
 export async function updateServiceCase(
   actor: Actor,
   id: string,
@@ -304,7 +534,13 @@ export async function updateServiceCase(
     assertServiceCaseTransition(current.status, input.status);
     if (
       input.status === ServiceCaseStatus.ACCEPTED &&
-      current.picId !== actor.id
+      current.picId !== actor.id &&
+      !(await db.serviceCaseParticipant.findUnique({
+        where: {
+          serviceCaseId_userId: { serviceCaseId: current.id, userId: actor.id },
+        },
+        select: { userId: true },
+      }))
     )
       throw new AppError(
         "Hanya PIC penerima yang dapat menerima pekerjaan.",
@@ -387,6 +623,13 @@ export async function updateServiceCase(
         appointmentAt: input.appointmentAt,
         waitReason: input.waitReason,
         escalationReason: input.escalationReason,
+        acquisitionStatus: input.acquisitionStatus,
+        targetValue: input.targetValue,
+        realizationValue: input.realizationValue,
+        metricUnit: input.metricUnit,
+        customerCif: input.customerCif,
+        customerAccount: input.customerAccount,
+        customerPhone: input.customerPhone,
         acceptedAt:
           input.status === ServiceCaseStatus.ACCEPTED ? now : undefined,
         acceptedById:
@@ -407,6 +650,16 @@ export async function updateServiceCase(
         "VERSION_CONFLICT",
       );
     const updated = await tx.serviceCase.findUniqueOrThrow({ where: { id } });
+    if (input.picId && input.picId !== current.picId) {
+      await tx.serviceCaseParticipant.deleteMany({
+        where: { serviceCaseId: id, userId: current.picId },
+      });
+      await tx.serviceCaseParticipant.upsert({
+        where: { serviceCaseId_userId: { serviceCaseId: id, userId: input.picId } },
+        create: { serviceCaseId: id, userId: input.picId },
+        update: {},
+      });
+    }
     const terminal =
       updated.status === ServiceCaseStatus.HANDLED ||
       updated.status === ServiceCaseStatus.VERIFIED ||
@@ -436,6 +689,25 @@ export async function updateServiceCase(
         serviceCaseId: updated.id,
       });
     }
+    const participantRows = await tx.serviceCaseParticipant.findMany({
+      where: { serviceCaseId: id },
+      select: { userId: true },
+    });
+    for (const recipientId of new Set([
+      updated.picId,
+      ...participantRows.map((row) => row.userId),
+    ])) {
+      await createAssignmentNotification(tx, {
+        recipientId,
+        branchId: updated.branchId,
+        type: "SERVICE_STATUS",
+        title: "Janji atau pekerjaan diperbarui",
+        message: `${updated.code} memiliki perubahan status, jadwal, atau tindak lanjut.`,
+        link: `/work/${updated.id}`,
+        dedupKey: `service-update:${updated.id}:${recipientId}:v${updated.version}`,
+        serviceCaseId: updated.id,
+      });
+    }
     await writeAudit(tx, actor, {
       entityType: "ServiceCase",
       entityId: id,
@@ -456,5 +728,65 @@ export async function updateServiceCase(
       requestId,
     });
     return updated;
+  });
+}
+
+export async function archiveServiceCase(
+  actor: Actor,
+  id: string,
+  version: number,
+  requestId?: string | null,
+) {
+  const current = await db.serviceCase.findFirst({
+    where: { id, AND: [serviceCaseScope(actor)] },
+  });
+  if (!current)
+    throw new AppError(
+      "Pekerjaan tidak ditemukan atau bukan tanggung jawab Anda.",
+      404,
+      "NOT_FOUND",
+    );
+  const allowed =
+    actor.role === Role.ADMIN ||
+    actor.role === Role.SUPERVISOR ||
+    current.createdById === actor.id;
+  if (!allowed)
+    throw new AppError(
+      "Hanya pembuat, supervisor cabang, atau ADMIN yang dapat menghapus kartu.",
+      403,
+      "FORBIDDEN",
+    );
+  return db.$transaction(async (tx) => {
+    const changed = await tx.serviceCase.updateMany({
+      where: { id, version, deletedAt: null },
+      data: {
+        deletedAt: new Date(),
+        status: ServiceCaseStatus.CANCELLED,
+        appointmentStatus: AppointmentStatus.CANCELLED,
+        appointmentAt: null,
+        version: { increment: 1 },
+      },
+    });
+    if (changed.count !== 1)
+      throw new AppError(
+        "Data telah berubah. Muat ulang sebelum menghapus.",
+        409,
+        "VERSION_CONFLICT",
+      );
+    await cancelServiceCaseJobs(
+      tx,
+      id,
+      "Kartu akuisisi dihapus dari daftar operasional.",
+    );
+    await writeAudit(tx, actor, {
+      entityType: "ServiceCase",
+      entityId: id,
+      action: "SERVICE_CASE_ARCHIVED",
+      branchId: current.branchId,
+      before: { status: current.status, deletedAt: null },
+      after: { status: ServiceCaseStatus.CANCELLED, deletedAt: new Date().toISOString() },
+      requestId,
+    });
+    return { id, archived: true };
   });
 }

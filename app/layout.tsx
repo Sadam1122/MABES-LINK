@@ -18,9 +18,9 @@ export const metadata: Metadata = {
   title: { default: "MABES LINK", template: "%s · MABES LINK" },
   description: "Operasional KCP Mandiri Jakarta Mangga Besar 11539 B.2",
   icons: {
-    icon: "/Gambar/logo.png",
-    shortcut: "/Gambar/logo.png",
-    apple: "/Gambar/logo.png",
+    icon: "/Gambar/logo-white.png",
+    shortcut: "/Gambar/logo-white.png",
+    apple: "/Gambar/logo-white.png",
   },
 };
 

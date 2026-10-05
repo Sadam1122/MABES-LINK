@@ -12,6 +12,7 @@ import { writeAudit } from "@/lib/audit";
 import {
   assertAllowed,
   canRecordVisit,
+  mappingProspectScope,
   prospectScope,
 } from "@/lib/authorization";
 import { db } from "@/lib/db";
@@ -34,8 +35,8 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
   const now = new Date();
   const where: Prisma.ProspectWhereInput = {
     AND: [
-      prospectScope(actor),
-      { usageVerifications: { some: { status: UsageStatus.VERIFIED } } },
+      mappingProspectScope(actor),
+      { OR: [{ usageVerifications: { some: { status: UsageStatus.VERIFIED } } }, { publicQrisRequestId: { not: null } }] },
       input.areaBlock ? { areaBlock: input.areaBlock } : {},
       input.businessSector ? { businessSector: input.businessSector } : {},
       input.actionNeeded
@@ -70,8 +71,7 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
     ],
   };
   const skip = (input.page - 1) * input.pageSize;
-  const [items, total, facets] = await db.$transaction([
-    db.prospect.findMany({
+  const items = await db.prospect.findMany({
       where,
       include: {
         assignedTo: { select: { id: true, name: true } },
@@ -95,19 +95,18 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
       orderBy: { updatedAt: "desc" },
       skip,
       take: input.pageSize,
-    }),
-    db.prospect.count({ where }),
-    db.prospect.findMany({
+  });
+  const total = await db.prospect.count({ where });
+  const facets = await db.prospect.findMany({
       where: {
         AND: [
-          prospectScope(actor),
-          { usageVerifications: { some: { status: UsageStatus.VERIFIED } } },
+          mappingProspectScope(actor),
+          { OR: [{ usageVerifications: { some: { status: UsageStatus.VERIFIED } } }, { publicQrisRequestId: { not: null } }] },
         ],
       },
       select: { areaBlock: true, businessSector: true },
       distinct: ["areaBlock", "businessSector"],
-    }),
-  ]);
+  });
   return {
     items,
     facets,

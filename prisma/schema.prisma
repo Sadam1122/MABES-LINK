@@ -63,6 +63,15 @@ enum UsageStatus {
   REJECTED
 }
 
+enum MappingMarkerIcon {
+  STORE
+  FOOD
+  MARKET
+  OFFICE
+  HEALTH
+  SERVICE
+}
+
 enum VisitOutcome {
   CONTACTED
   NEED_CONFIRMED
@@ -133,6 +142,21 @@ enum AppointmentStatus {
   CANCELLED
 }
 
+enum AcquisitionStatus {
+  PROSPECT
+  FOLLOW_UP
+  PROCESS
+  SUCCESS
+  UNSUCCESSFUL
+}
+
+enum AcquisitionMetricUnit {
+  CUSTOMER
+  ACCOUNT
+  MERCHANT
+  IDR
+}
+
 enum CaseOrigin {
   IN_BRANCH
   OUT_BRANCH
@@ -159,37 +183,38 @@ model Branch {
 
 // Tabel inti Better Auth, diperluas dengan role dan cabang aplikasi.
 model User {
-  id                        String              @id @default(cuid())
+  id                        String                   @id @default(cuid())
   name                      String
-  email                     String              @unique
-  emailVerified             Boolean             @default(false)
+  email                     String                   @unique
+  emailVerified             Boolean                  @default(false)
   image                     String?
-  role                      Role                @default(OUT_BRANCH)
-  active                    Boolean             @default(true)
-  emailNotificationsEnabled Boolean             @default(true)
-  isTest                    Boolean             @default(false)
+  role                      Role                     @default(OUT_BRANCH)
+  active                    Boolean                  @default(true)
+  emailNotificationsEnabled Boolean                  @default(true)
+  isTest                    Boolean                  @default(false)
   branchId                  String?
-  branch                    Branch?             @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  createdAt                 DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt                 DateTime            @updatedAt @db.Timestamptz(3)
+  branch                    Branch?                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdAt                 DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime                 @updatedAt @db.Timestamptz(3)
   sessions                  Session[]
   accounts                  Account[]
-  createdProspects          Prospect[]          @relation("ProspectCreator")
-  assignedProspects         Prospect[]          @relation("ProspectAssignee")
-  followUps                 FollowUp[]          @relation("FollowUpAssignee")
-  sentBatches               HandoverBatch[]     @relation("HandoverSender")
-  receivedBatches           HandoverBatch[]     @relation("HandoverReceiver")
-  exceptionCases            ExceptionCase[]     @relation("ExceptionAssignee")
-  usageVerifications        UsageVerification[] @relation("UsageRecorder")
-  auditLogs                 AuditLog[]          @relation("AuditActor")
-  visits                    Visit[]             @relation("VisitCreator")
-  notifications             Notification[]      @relation("NotificationRecipient")
-  outboxJobs                OutboxJob[]         @relation("OutboxRecipient")
-  emailDeliveries           EmailDelivery[]     @relation("EmailRecipient")
-  createdServiceCases       ServiceCase[]       @relation("ServiceCaseCreator")
-  assignedServiceCases      ServiceCase[]       @relation("ServiceCasePic")
-  acceptedServiceCases      ServiceCase[]       @relation("ServiceCaseAcceptor")
-  locationPhotos            LocationPhoto[]     @relation("LocationPhotoCreator")
+  createdProspects          Prospect[]               @relation("ProspectCreator")
+  assignedProspects         Prospect[]               @relation("ProspectAssignee")
+  followUps                 FollowUp[]               @relation("FollowUpAssignee")
+  sentBatches               HandoverBatch[]          @relation("HandoverSender")
+  receivedBatches           HandoverBatch[]          @relation("HandoverReceiver")
+  exceptionCases            ExceptionCase[]          @relation("ExceptionAssignee")
+  usageVerifications        UsageVerification[]      @relation("UsageRecorder")
+  auditLogs                 AuditLog[]               @relation("AuditActor")
+  visits                    Visit[]                  @relation("VisitCreator")
+  notifications             Notification[]           @relation("NotificationRecipient")
+  outboxJobs                OutboxJob[]              @relation("OutboxRecipient")
+  emailDeliveries           EmailDelivery[]          @relation("EmailRecipient")
+  createdServiceCases       ServiceCase[]            @relation("ServiceCaseCreator")
+  assignedServiceCases      ServiceCase[]            @relation("ServiceCasePic")
+  serviceCaseParticipants   ServiceCaseParticipant[]
+  acceptedServiceCases      ServiceCase[]            @relation("ServiceCaseAcceptor")
+  locationPhotos            LocationPhoto[]          @relation("LocationPhotoCreator")
 
   @@index([branchId, role, active])
 }
@@ -242,46 +267,78 @@ model Verification {
 }
 
 model Prospect {
-  id                 String              @id @default(cuid())
-  internalCode       String              @unique @db.VarChar(30)
-  cakraReference     String?             @unique @db.VarChar(80)
-  businessAlias      String              @db.VarChar(120)
-  need               String              @db.VarChar(500)
-  contactPic         String              @db.VarChar(100)
-  areaBlock          String?             @db.VarChar(100)
-  businessSector     String?             @db.VarChar(100)
-  addressHint        String?             @db.VarChar(220)
-  latitude           Decimal?            @db.Decimal(10, 7)
-  longitude          Decimal?            @db.Decimal(10, 7)
-  productNeeds       String[]            @default([])
-  locationLabel      String?             @db.VarChar(120)
-  locationSource     String?             @db.VarChar(32)
-  locationUpdatedAt  DateTime?           @db.Timestamptz(3)
-  isTest             Boolean             @default(false)
-  testNamespace      String?             @db.VarChar(80)
-  opportunityStage   OpportunityStage    @default(NEW)
-  branchId           String
-  branch             Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  assignedToId       String
-  assignedTo         User                @relation("ProspectAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
-  createdById        String
-  createdBy          User                @relation("ProspectCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  version            Int                 @default(1)
-  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
-  followUps          FollowUp[]
-  handoverItems      HandoverItem[]
-  exceptionCases     ExceptionCase[]
-  usageVerifications UsageVerification[]
-  visits             Visit[]
-  serviceCases       ServiceCase[]
-  locationPhotos     LocationPhoto[]
+  id                     String              @id @default(cuid())
+  internalCode           String              @unique @db.VarChar(30)
+  cakraReference         String?             @unique @db.VarChar(80)
+  businessAlias          String              @db.VarChar(120)
+  need                   String              @db.VarChar(500)
+  contactPic             String              @db.VarChar(100)
+  areaBlock              String?             @db.VarChar(100)
+  businessSector         String?             @db.VarChar(100)
+  addressHint            String?             @db.VarChar(220)
+  latitude               Decimal?            @db.Decimal(10, 7)
+  longitude              Decimal?            @db.Decimal(10, 7)
+  productNeeds           String[]            @default([])
+  locationLabel          String?             @db.VarChar(120)
+  locationSource         String?             @db.VarChar(32)
+  locationUpdatedAt      DateTime?           @db.Timestamptz(3)
+  mappingMarkerIcon      MappingMarkerIcon   @default(STORE)
+  publicQrisRequestId    String?             @unique @db.VarChar(80)
+  publicDedupKey         String?             @unique @db.VarChar(64)
+  publicContactPhone     String?             @db.VarChar(30)
+  publicBusinessCategory String?             @db.VarChar(100)
+  publicBankRelationship String?             @db.VarChar(30)
+  publicContactWindow    String?             @db.VarChar(100)
+  publicContactConsentAt DateTime?           @db.Timestamptz(3)
+  isTest                 Boolean             @default(false)
+  testNamespace          String?             @db.VarChar(80)
+  opportunityStage       OpportunityStage    @default(NEW)
+  branchId               String
+  branch                 Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  assignedToId           String
+  assignedTo             User                @relation("ProspectAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdById            String?
+  createdBy              User?               @relation("ProspectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  version                Int                 @default(1)
+  createdAt              DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime            @updatedAt @db.Timestamptz(3)
+  followUps              FollowUp[]
+  handoverItems          HandoverItem[]
+  exceptionCases         ExceptionCase[]
+  usageVerifications     UsageVerification[]
+  visits                 Visit[]
+  serviceCases           ServiceCase[]
+  locationPhotos         LocationPhoto[]
 
   @@index([branchId, isTest, opportunityStage, updatedAt])
   @@index([assignedToId, opportunityStage])
   @@index([businessAlias])
   @@index([branchId, areaBlock, businessSector])
   @@index([latitude, longitude])
+  @@index([branchId, publicContactConsentAt])
+}
+
+model QrisDesignSession {
+  id         String   @id @default(cuid())
+  tokenHash  String   @db.VarChar(64)
+  storageKey String   @unique @db.VarChar(180)
+  mimeType   String   @db.VarChar(60)
+  width      Int
+  height     Int
+  qrDigest   String   @db.VarChar(64)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime @db.Timestamptz(3)
+
+  @@index([expiresAt])
+}
+
+model PublicRateLimit {
+  key       String   @id @db.VarChar(80)
+  count     Int      @default(0)
+  windowEnd DateTime @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([windowEnd])
 }
 
 model FollowUp {
@@ -388,6 +445,8 @@ model AuditLog {
   branch     Branch?  @relation(fields: [branchId], references: [id], onDelete: Restrict)
   actorId    String?
   actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorName  String?  @db.VarChar(120)
+  actorRole  Role?
   entityType String   @db.VarChar(60)
   entityId   String   @db.VarChar(100)
   action     String   @db.VarChar(80)
@@ -514,48 +573,71 @@ model EmailDelivery {
 }
 
 model ServiceCase {
-  id                String            @id @default(cuid())
-  code              String            @unique @db.VarChar(36)
-  branchId          String
-  branch            Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  prospectId        String
-  prospect          Prospect          @relation(fields: [prospectId], references: [id], onDelete: Restrict)
-  origin            CaseOrigin
-  status            ServiceCaseStatus @default(CREATED)
-  title             String            @db.VarChar(160)
-  description       String            @db.VarChar(700)
-  picId             String
-  pic               User              @relation("ServiceCasePic", fields: [picId], references: [id], onDelete: Restrict)
-  createdById       String
-  createdBy         User              @relation("ServiceCaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  acceptedById      String?
-  acceptedBy        User?             @relation("ServiceCaseAcceptor", fields: [acceptedById], references: [id], onDelete: Restrict)
-  nextAction        String            @db.VarChar(300)
-  dueAt             DateTime          @db.Timestamptz(3)
-  appointmentStatus AppointmentStatus @default(NEEDS_SCHEDULING)
-  appointmentAt     DateTime?         @db.Timestamptz(3)
-  acceptedAt        DateTime?         @db.Timestamptz(3)
-  handledAt         DateTime?         @db.Timestamptz(3)
-  verifiedAt        DateTime?         @db.Timestamptz(3)
-  closedAt          DateTime?         @db.Timestamptz(3)
-  reopenedAt        DateTime?         @db.Timestamptz(3)
-  waitReason        String?           @db.VarChar(500)
-  escalationReason  String?           @db.VarChar(500)
-  sourceSystem      String?           @db.VarChar(40)
-  sourceReference   String?           @db.VarChar(100)
-  isTest            Boolean           @default(false)
-  testNamespace     String?           @db.VarChar(80)
-  version           Int               @default(1)
-  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
-  notifications     Notification[]
-  outboxJobs        OutboxJob[]
+  id                  String                   @id @default(cuid())
+  code                String                   @unique @db.VarChar(36)
+  branchId            String
+  branch              Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  prospectId          String
+  prospect            Prospect                 @relation(fields: [prospectId], references: [id], onDelete: Restrict)
+  origin              CaseOrigin
+  status              ServiceCaseStatus        @default(CREATED)
+  title               String                   @db.VarChar(160)
+  description         String                   @db.VarChar(700)
+  picId               String
+  pic                 User                     @relation("ServiceCasePic", fields: [picId], references: [id], onDelete: Restrict)
+  createdById         String
+  createdBy           User                     @relation("ServiceCaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  acceptedById        String?
+  acceptedBy          User?                    @relation("ServiceCaseAcceptor", fields: [acceptedById], references: [id], onDelete: Restrict)
+  nextAction          String                   @db.VarChar(300)
+  dueAt               DateTime                 @db.Timestamptz(3)
+  appointmentStatus   AppointmentStatus        @default(NEEDS_SCHEDULING)
+  appointmentAt       DateTime?                @db.Timestamptz(3)
+  acquisitionCategory String?                  @db.VarChar(40)
+  acquisitionProduct  String?                  @db.VarChar(80)
+  acquisitionStatus   AcquisitionStatus        @default(PROSPECT)
+  targetValue         Decimal?                 @db.Decimal(18, 2)
+  realizationValue    Decimal?                 @db.Decimal(18, 2)
+  metricUnit          AcquisitionMetricUnit?
+  customerCif         String?                  @db.VarChar(40)
+  customerAccount     String?                  @db.VarChar(40)
+  customerPhone       String?                  @db.VarChar(30)
+  acceptedAt          DateTime?                @db.Timestamptz(3)
+  handledAt           DateTime?                @db.Timestamptz(3)
+  verifiedAt          DateTime?                @db.Timestamptz(3)
+  closedAt            DateTime?                @db.Timestamptz(3)
+  reopenedAt          DateTime?                @db.Timestamptz(3)
+  deletedAt           DateTime?                @db.Timestamptz(3)
+  waitReason          String?                  @db.VarChar(500)
+  escalationReason    String?                  @db.VarChar(500)
+  sourceSystem        String?                  @db.VarChar(40)
+  sourceReference     String?                  @db.VarChar(100)
+  isTest              Boolean                  @default(false)
+  testNamespace       String?                  @db.VarChar(80)
+  version             Int                      @default(1)
+  createdAt           DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime                 @updatedAt @db.Timestamptz(3)
+  notifications       Notification[]
+  outboxJobs          OutboxJob[]
+  participants        ServiceCaseParticipant[]
 
   @@unique([sourceSystem, sourceReference])
-  @@index([branchId, isTest, status, dueAt])
+  @@index([branchId, isTest, deletedAt, status, dueAt])
   @@index([picId, isTest, status, dueAt])
   @@index([prospectId, createdAt])
   @@index([appointmentStatus, appointmentAt])
+  @@index([branchId, acquisitionCategory, acquisitionStatus])
+}
+
+model ServiceCaseParticipant {
+  serviceCaseId String
+  serviceCase   ServiceCase @relation(fields: [serviceCaseId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@id([serviceCaseId, userId])
+  @@index([userId, createdAt])
 }
 
 model LocationPhoto {

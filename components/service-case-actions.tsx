@@ -8,6 +8,7 @@ import { Dialog, DialogClose } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
 import { clientApi } from "@/lib/client-api";
 import { isoToJakartaLocalInput, jakartaLocalToIso } from "@/lib/format";
+import { ServiceCaseDeleteButton } from "@/components/service-case-delete-button";
 
 type Action = { label: string; to: string };
 
@@ -18,7 +19,12 @@ export function ServiceCaseActions({
   appointmentStatus,
   dueAt,
   appointmentAt,
+  acquisitionStatus,
+  targetValue,
+  realizationValue,
+  metricUnit,
   canVerify,
+  canDelete,
 }: {
   id: string;
   version: number;
@@ -26,7 +32,12 @@ export function ServiceCaseActions({
   appointmentStatus: string;
   dueAt: string;
   appointmentAt: string | null;
+  acquisitionStatus: string;
+  targetValue: number | null;
+  realizationValue: number | null;
+  metricUnit: string | null;
   canVerify: boolean;
+  canDelete: boolean;
 }) {
   const router = useRouter();
   const { confirm, toast } = useFeedback();
@@ -111,7 +122,31 @@ export function ServiceCaseActions({
       appointmentAt: form.get("appointmentAt")
         ? jakartaLocalToIso(String(form.get("appointmentAt")))
         : null,
+      acquisitionStatus: form.get("acquisitionStatus"),
+      targetValue:
+        String(form.get("targetValue") ?? "").trim() === ""
+          ? null
+          : Number(form.get("targetValue")),
+      realizationValue:
+        String(form.get("realizationValue") ?? "").trim() === ""
+          ? null
+          : Number(form.get("realizationValue")),
+      metricUnit: form.get("metricUnit") || null,
     });
+  }
+
+  async function cancelAppointment() {
+    if (
+      !(await confirm({
+        title: "Batalkan janji?",
+        description:
+          "Seluruh reminder aktif untuk jadwal ini akan dibatalkan. Riwayat janji tetap tersimpan pada audit.",
+        confirmLabel: "Batalkan janji",
+        tone: "danger",
+      }))
+    )
+      return;
+    await patch({ appointmentStatus: "CANCELLED", appointmentAt: null });
   }
 
   return (
@@ -163,6 +198,35 @@ export function ServiceCaseActions({
             Perlu membuat janji tidak berarti janji sudah terkonfirmasi.
           </p>
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="label">
+            Status akuisisi
+            <select className="field mt-1" name="acquisitionStatus" defaultValue={acquisitionStatus}>
+              <option value="PROSPECT">Prospek</option>
+              <option value="FOLLOW_UP">Follow Up</option>
+              <option value="PROCESS">Proses</option>
+              <option value="SUCCESS">Berhasil</option>
+              <option value="UNSUCCESSFUL">Tidak Berhasil</option>
+            </select>
+          </label>
+          <label className="label">
+            Satuan target
+            <select className="field mt-1" name="metricUnit" defaultValue={metricUnit ?? "CUSTOMER"}>
+              <option value="CUSTOMER">Nasabah</option>
+              <option value="ACCOUNT">Rekening</option>
+              <option value="MERCHANT">Merchant</option>
+              <option value="IDR">Rupiah</option>
+            </select>
+          </label>
+          <label className="label">
+            Target
+            <input className="field mt-1" name="targetValue" type="number" min="0" step="0.01" defaultValue={targetValue ?? ""} />
+          </label>
+          <label className="label">
+            Realisasi
+            <input className="field mt-1" name="realizationValue" type="number" min="0" step="0.01" defaultValue={realizationValue ?? ""} />
+          </label>
+        </div>
         <label className="label">
           Next action
           <input
@@ -209,7 +273,19 @@ export function ServiceCaseActions({
             }
           />
         </label>
-        <Button disabled={busy}>{busy ? "Menyimpan…" : "Simpan jadwal"}</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={busy}>{busy ? "Menyimpan…" : "Simpan jadwal"}</Button>
+          {!['COMPLETED', 'CANCELLED'].includes(appointmentStatus) ? (
+            <Button
+              type="button"
+              variant="danger"
+              disabled={busy}
+              onClick={() => void cancelAppointment()}
+            >
+              Batalkan janji
+            </Button>
+          ) : null}
+        </div>
       </form>
       <Dialog
         open={Boolean(reasonFor)}
@@ -224,6 +300,13 @@ export function ServiceCaseActions({
           <label className="label">Alasan<textarea data-autofocus className="textarea mt-1" name="reason" minLength={3} maxLength={500} required /></label>
         </form>
       </Dialog>
+      {canDelete ? (
+        <div className="card border-red-200 p-5">
+          <h2 className="font-black text-red-800">Hapus dari daftar</h2>
+          <p className="mt-1 text-sm text-slate-500">Reminder dibatalkan dan kartu disembunyikan, tetapi audit tetap dipertahankan.</p>
+          <div className="mt-3"><ServiceCaseDeleteButton id={id} version={version} redirectAfter /></div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { Building2 } from "lucide-react";
 
 import { AppNav } from "@/components/app-nav";
@@ -24,18 +24,29 @@ const scopeLabel = {
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const actor = await requirePageActor();
-  const [branch, notificationConfig] = await Promise.all([
-    actor.branchId
-      ? db.branch.findUnique({
+  const workerStaleAfter = Math.max(
+    120_000,
+    Number(process.env.WORKER_POLL_INTERVAL_MS ?? 60_000) * 2.5,
+  );
+  const branch = actor.branchId
+    ? await db.branch.findUnique({
           where: { id: actor.branchId },
           select: { code: true, name: true },
         })
-      : null,
-    db.appConfig.findUnique({ where: { key: "notifications" } }),
-  ]);
+    : null;
+  const notificationConfig = await db.appConfig.findUnique({
+    where: { key: "notifications" },
+  });
+  const workerStatus = await db.$queryRaw<{ available: boolean }[]>(Prisma.sql`
+      SELECT EXISTS (
+        SELECT 1 FROM "WorkerHeartbeat"
+        WHERE "lastSeen" >= NOW() - (${workerStaleAfter} * INTERVAL '1 millisecond')
+      ) AS available
+    `);
   const notificationValues = notificationConfig?.value as
     | Record<string, unknown>
     | null;
+  const workerAvailable = workerStatus[0]?.available ?? false;
   return (
     <div id="app-shell" className="min-h-screen lg:grid lg:grid-cols-[244px_1fr]">
       <aside className="hidden min-h-screen flex-col bg-brand-deep text-white lg:fixed lg:inset-y-0 lg:flex lg:w-[244px]">
@@ -92,6 +103,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             </div>
           </div>
         </header>
+        {!workerAvailable ? (
+          <div
+            role="alert"
+            className="border-b border-red-300 bg-red-50 px-4 py-3 text-center text-sm font-bold text-red-800 sm:px-6 lg:px-8"
+          >
+            Worker pengingat tidak aktif. Alarm dan email terjadwal tidak akan diproses sampai worker dijalankan.
+          </div>
+        ) : null}
         <main className="mx-auto max-w-[1440px] px-4 py-6 pb-24 sm:px-6 lg:px-8 lg:py-8 lg:pb-10">
           {children}
         </main>

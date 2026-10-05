@@ -11,10 +11,12 @@ import {
   claimAudioNotice,
   defaultSoundPreferences,
   getNotificationAudioManager,
+  reminderAlarmUrgency,
   loadCustomSound,
   loadSoundPreferences,
   NOTIFICATION_PREFERENCES_EVENT,
   reminderSoundKind,
+  shouldCatchUpAppointmentSound,
   shouldPlayReminderSound,
   type SoundPreferences,
 } from "@/lib/client/notification-audio";
@@ -30,12 +32,14 @@ type Notice = {
 };
 type ConnectionMode = "menghubungkan" | "SSE" | "polling" | "terputus";
 
-const formatWib = (value: string) =>
-  `${new Intl.DateTimeFormat("id-ID", {
+const formatWib = (value: string) => {
+  const formatted = new Intl.DateTimeFormat("id-ID", {
     timeZone: "Asia/Jakarta",
     dateStyle: "long",
     timeStyle: "short",
-  }).format(new Date(value))} WIB`;
+  }).format(new Date(value));
+  return /\bWIB\b/i.test(formatted) ? formatted : `${formatted} WIB`;
+};
 
 export function NotificationCenter({
   userId,
@@ -58,6 +62,10 @@ export function NotificationCenter({
   const browserEnabledRef = useRef(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const seen = useRef(new Set<string>());
+  const pendingCatchup = useRef<Notice[]>([]);
+  const announceRef = useRef<(notice: Notice) => Promise<void>>(
+    async () => undefined,
+  );
   const dropdownRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
 
@@ -101,6 +109,8 @@ export function NotificationCenter({
         const customSound = await loadCustomSound(userId);
         if (customSound) await manager.setCustomSound(customSound.data);
         if (ready && !disposed) {
+          const waiting = pendingCatchup.current.splice(0);
+          waiting.forEach((notice) => void announceRef.current(notice));
           window.removeEventListener("pointerdown", armFromGesture, true);
           window.removeEventListener("keydown", armFromGesture, true);
         }
@@ -135,7 +145,10 @@ export function NotificationCenter({
       disposed = true;
       window.removeEventListener("pointerdown", armFromGesture, true);
       window.removeEventListener("keydown", armFromGesture, true);
-      window.removeEventListener(NOTIFICATION_PREFERENCES_EVENT, syncPreferences);
+      window.removeEventListener(
+        NOTIFICATION_PREFERENCES_EVENT,
+        syncPreferences,
+      );
       window.removeEventListener("storage", syncPreferences);
     };
   }, [userId]);
@@ -183,10 +196,18 @@ export function NotificationCenter({
         !shouldPlayReminderSound(notice.type, new Date(), quietStart, quietEnd)
       )
         return;
-      if (getNotificationAudioManager().play(preferences.repeatCount)) {
-        navigator.vibrate?.([180, 100, 180]);
+      const urgency = reminderAlarmUrgency(notice.type);
+      if (
+        getNotificationAudioManager().play(preferences.repeatCount, urgency)
+      ) {
+        navigator.vibrate?.(
+          urgency === "appointment-due"
+            ? [400, 100, 400, 100, 800]
+            : [180, 100, 180],
+        );
       }
     };
+    announceRef.current = announce;
 
     const merge = (incoming: Notice[], shouldAnnounce: boolean) => {
       const fresh = incoming.filter((notice) => !seen.current.has(notice.id));
@@ -197,7 +218,9 @@ export function NotificationCenter({
           ...current.filter(
             (row) => !incoming.some((notice) => notice.id === row.id),
           ),
-          ...incoming.filter((notice) => current.some((row) => row.id === notice.id)),
+          ...incoming.filter((notice) =>
+            current.some((row) => row.id === notice.id),
+          ),
         ];
         return Array.from(new Map(merged.map((row) => [row.id, row])).values())
           .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? 1 : -1))
@@ -223,13 +246,34 @@ export function NotificationCenter({
         .then(() => setError(""))
         .catch(() => {
           setMode("terputus");
-          setError("Pembaruan notifikasi sedang terputus. Sistem akan mencoba lagi.");
+          setError(
+            "Pembaruan notifikasi sedang terputus. Sistem akan mencoba lagi.",
+          );
         });
 
     void requestItems(false)
       .then((initial) => {
         if (cancelled) return;
         setLoading(false);
+        const catchup = initial
+          .filter((notice) =>
+            shouldCatchUpAppointmentSound(
+              notice.type,
+              notice.readAt,
+              notice.createdAt,
+            ),
+          )
+          .sort(
+            (left, right) =>
+              new Date(right.createdAt).getTime() -
+              new Date(left.createdAt).getTime(),
+          )
+          .slice(0, 1);
+        pendingCatchup.current = catchup;
+        if (getNotificationAudioManager().state === "running") {
+          pendingCatchup.current = [];
+          catchup.forEach((notice) => void announce(notice));
+        }
         const cursor = initial.reduce(
           (maximum, item) =>
             BigInt(item.id) > maximum ? BigInt(item.id) : maximum,
@@ -252,7 +296,9 @@ export function NotificationCenter({
       })
       .catch((reason) => {
         setLoading(false);
-        setError(reason instanceof Error ? reason.message : "Notifikasi gagal dimuat.");
+        setError(
+          reason instanceof Error ? reason.message : "Notifikasi gagal dimuat.",
+        );
         setMode("polling");
         poll = window.setInterval(pollNow, 5_000);
       });
@@ -262,6 +308,7 @@ export function NotificationCenter({
       source?.close();
       if (poll != null) window.clearInterval(poll);
       channel?.close();
+      announceRef.current = async () => undefined;
     };
   }, [quietEnd, quietStart, toast, userId]);
 
@@ -299,8 +346,12 @@ export function NotificationCenter({
       const response = await fetch("/api/notifications", { method: "PATCH" });
       if (!response.ok) throw new Error();
       const readAt = new Date().toISOString();
-      setItems((current) => current.map((row) => ({ ...row, readAt: row.readAt ?? readAt })));
-      setSelected((current) => current ? { ...current, readAt: current.readAt ?? readAt } : current);
+      setItems((current) =>
+        current.map((row) => ({ ...row, readAt: row.readAt ?? readAt })),
+      );
+      setSelected((current) =>
+        current ? { ...current, readAt: current.readAt ?? readAt } : current,
+      );
       toast("Semua notifikasi ditandai sudah dibaca.", "success");
     } catch {
       toast("Semua notifikasi belum dapat ditandai dibaca.", "error");
@@ -364,14 +415,20 @@ export function NotificationCenter({
               </div>
             </div>
             {error ? (
-              <p className="m-3 rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">
+              <p
+                className="m-3 rounded-xl bg-red-50 p-3 text-sm text-red-700"
+                role="alert"
+              >
                 {error}
               </p>
             ) : null}
             {loading ? (
               <div className="space-y-2 p-3" aria-busy="true">
                 {[1, 2, 3].map((value) => (
-                  <div key={value} className="h-20 animate-pulse rounded-xl bg-slate-100" />
+                  <div
+                    key={value}
+                    className="h-20 animate-pulse rounded-xl bg-slate-100"
+                  />
                 ))}
               </div>
             ) : items.length === 0 ? (
@@ -389,7 +446,10 @@ export function NotificationCenter({
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-sm font-bold">{item.title}</p>
                       {!item.readAt ? (
-                        <span className="mt-1 size-2 shrink-0 rounded-full bg-blue-700" aria-label="Belum dibaca" />
+                        <span
+                          className="mt-1 size-2 shrink-0 rounded-full bg-blue-700"
+                          aria-label="Belum dibaca"
+                        />
                       ) : null}
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">

@@ -40,7 +40,9 @@ async function main() {
       if (outcome === "error") throw new Error(`${credential.role}: login UI ditolak — ${await page.locator('form p[role="alert"]').innerText()}`);
       const adminApi = await page.request.get(`${baseURL}/api/admin/users`);
       const mappingApi = await page.request.get(`${baseURL}/api/mapping`);
+      const appointmentMap = await page.request.get(`${baseURL}/appointment-map`);
       if (mappingApi.status() !== 200) throw new Error(`${credential.role}: API mapping menghasilkan ${mappingApi.status()}.`);
+      if (appointmentMap.status() !== 200) throw new Error(`${credential.role}: Mapping Janji menghasilkan ${appointmentMap.status()}.`);
       if (credential.role === "ADMIN" && adminApi.status() !== 200) throw new Error("ADMIN tidak dapat mengakses API admin.");
       if (credential.role !== "ADMIN" && adminApi.status() !== 403) throw new Error(`${credential.role}: API admin seharusnya 403, aktual ${adminApi.status()}.`);
       const settingsVisible = await page.locator('a[href="/admin"]').count();

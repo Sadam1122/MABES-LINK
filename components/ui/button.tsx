@@ -13,6 +13,7 @@ const buttonVariants = cva(
           "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
         ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
         danger: "bg-red-600 text-white hover:bg-red-700",
+        success: "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700",
       },
       size: { default: "h-11", sm: "min-h-11 px-3 text-xs", lg: "h-12 px-5" },
     },

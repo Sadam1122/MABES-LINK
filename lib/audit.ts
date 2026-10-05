@@ -20,6 +20,8 @@ export async function writeAudit(
   return tx.auditLog.create({
     data: {
       actorId: actor.id,
+      actorName: actor.name,
+      actorRole: actor.role,
       branchId: input.branchId ?? actor.branchId,
       entityType: input.entityType,
       entityId: input.entityId,

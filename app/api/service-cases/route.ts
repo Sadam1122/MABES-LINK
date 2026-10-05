@@ -1,4 +1,8 @@
-import { AppointmentStatus, ServiceCaseStatus } from "@prisma/client";
+import {
+  AcquisitionStatus,
+  AppointmentStatus,
+  ServiceCaseStatus,
+} from "@prisma/client";
 import { apiError, jsonOk, parseJson } from "@/lib/api";
 import { requireActor } from "@/lib/session";
 import {
@@ -24,6 +28,12 @@ export async function GET(request: Request) {
         )
           ? (raw.appointmentStatus as AppointmentStatus)
           : undefined,
+        acquisitionStatus: Object.values(AcquisitionStatus).includes(
+          raw.acquisitionStatus as AcquisitionStatus,
+        )
+          ? (raw.acquisitionStatus as AcquisitionStatus)
+          : undefined,
+        acquisitionCategory: raw.acquisitionCategory,
         overdue: raw.overdue === "1",
       }),
     );

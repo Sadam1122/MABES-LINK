@@ -21,31 +21,16 @@ export async function getDashboard(actor: Actor) {
   const fScope = followUpScope(actor);
   const sScope = serviceCaseScope(actor);
 
-  const [
-    prospects,
-    followUpsCompleted,
-    followUpsOverdue,
-    serviceCasesOverdue,
-    handoversAccepted,
-    servicesReady,
-    usageVerified,
-    stages,
-    recent,
-    mappedProspects,
-    visits,
-    reminderSucceeded,
-    reminderFailed,
-  ] = await db.$transaction([
-    db.prospect.count({ where: pScope }),
-    db.followUp.count({
+  const prospects = await db.prospect.count({ where: pScope });
+  const followUpsCompleted = await db.followUp.count({
       where: { AND: [fScope, { status: FollowUpStatus.COMPLETED }] },
-    }),
-    db.followUp.count({
+    });
+  const followUpsOverdue = await db.followUp.count({
       where: {
         AND: [fScope, { status: FollowUpStatus.PLANNED, dueAt: { lt: now } }],
       },
-    }),
-    db.serviceCase.count({
+    });
+  const serviceCasesOverdue = await db.serviceCase.count({
       where: {
         AND: [
           sScope,
@@ -57,23 +42,23 @@ export async function getDashboard(actor: Actor) {
           },
         ],
       },
-    }),
-    db.handoverBatch.count({
+    });
+  const handoversAccepted = await db.handoverBatch.count({
       where: { AND: [hScope, { acceptedAt: { not: null } }] },
-    }),
-    db.handoverBatch.count({
+    });
+  const servicesReady = await db.handoverBatch.count({
       where: { AND: [hScope, { status: HandoverStatus.READY }] },
-    }),
-    db.usageVerification.count({
+    });
+  const usageVerified = await db.usageVerification.count({
       where: { status: UsageStatus.VERIFIED, prospect: pScope },
-    }),
-    db.prospect.groupBy({
+    });
+  const stages = await db.prospect.groupBy({
       by: ["opportunityStage"],
       where: pScope,
       orderBy: { opportunityStage: "asc" },
       _count: { _all: true },
-    }),
-    db.auditLog.findMany({
+    });
+  const recent = await db.auditLog.findMany({
       where:
         actor.role === "ADMIN"
           ? {}
@@ -83,28 +68,27 @@ export async function getDashboard(actor: Actor) {
       include: { actor: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-    db.prospect.count({
+    });
+  const mappedProspects = await db.prospect.count({
       where: {
         AND: [pScope, { latitude: { not: null }, longitude: { not: null } }],
       },
-    }),
-    db.visit.count({ where: { prospect: pScope } }),
-    db.outboxJob.count({
+    });
+  const visits = await db.visit.count({ where: { prospect: pScope } });
+  const reminderSucceeded = await db.outboxJob.count({
       where: {
         isTest: false,
         status: "SUCCEEDED",
         ...(actor.role === "ADMIN" ? {} : { branchId: actor.branchId }),
       },
-    }),
-    db.outboxJob.count({
+    });
+  const reminderFailed = await db.outboxJob.count({
       where: {
         isTest: false,
         status: { in: ["FAILED", "UNKNOWN"] },
         ...(actor.role === "ADMIN" ? {} : { branchId: actor.branchId }),
       },
-    }),
-  ]);
+    });
 
   const stageMap = Object.fromEntries(
     stages.map((item) => [

@@ -9,6 +9,7 @@ import {
 } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
+import { createAssignmentNotification } from "@/lib/notifications";
 import type { Actor } from "@/lib/session";
 import { makeCode } from "@/lib/utils";
 import { assertProspectTransition } from "@/lib/workflow";
@@ -44,8 +45,7 @@ export async function listProspects(actor: Actor, input: PageInput) {
     ],
   };
   const skip = (input.page - 1) * input.pageSize;
-  const [items, total] = await db.$transaction([
-    db.prospect.findMany({
+  const items = await db.prospect.findMany({
       where,
       include: {
         assignedTo: { select: { id: true, name: true, role: true } },
@@ -56,9 +56,8 @@ export async function listProspects(actor: Actor, input: PageInput) {
       orderBy: { updatedAt: "desc" },
       skip,
       take: input.pageSize,
-    }),
-    db.prospect.count({ where }),
-  ]);
+  });
+  const total = await db.prospect.count({ where });
   return {
     items,
     pagination: {
@@ -270,6 +269,15 @@ export async function updateProspect(
         "VERSION_CONFLICT",
       );
     const updated = await tx.prospect.findUniqueOrThrow({ where: { id } });
+    await createAssignmentNotification(tx, {
+      recipientId: updated.assignedToId,
+      branchId: updated.branchId,
+      type: "SERVICE_STATUS",
+      title: "Mapping lokasi diperbarui",
+      message: `${updated.internalCode} memiliki perubahan data atau lokasi.`,
+      link: "/mapping",
+      dedupKey: `prospect-update:${updated.id}:v${updated.version}`,
+    });
     await writeAudit(tx, actor, {
       entityType: "Prospect",
       entityId: id,

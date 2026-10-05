@@ -35,6 +35,11 @@ export function prospectScope(actor: Actor): Prisma.ProspectWhereInput {
   };
 }
 
+export function mappingProspectScope(actor: Actor): Prisma.ProspectWhereInput {
+  if (actor.role === Role.ADMIN) return { isTest: false };
+  return { branchId: requireBranch(actor), isTest: false };
+}
+
 export function followUpScope(actor: Actor): Prisma.FollowUpWhereInput {
   if (actor.role === Role.ADMIN) return { prospect: { isTest: false } };
   if (actor.role === Role.SUPERVISOR)
@@ -56,10 +61,19 @@ export function handoverScope(actor: Actor): Prisma.HandoverBatchWhereInput {
 }
 
 export function serviceCaseScope(actor: Actor): Prisma.ServiceCaseWhereInput {
-  if (actor.role === Role.ADMIN) return { isTest: false };
+  if (actor.role === Role.ADMIN) return { isTest: false, deletedAt: null };
   const branchId = requireBranch(actor);
-  if (actor.role === Role.SUPERVISOR) return { branchId, isTest: false };
-  return { branchId, isTest: false, picId: actor.id };
+  if (actor.role === Role.SUPERVISOR)
+    return { branchId, isTest: false, deletedAt: null };
+  return {
+    branchId,
+    isTest: false,
+    deletedAt: null,
+    OR: [
+      { picId: actor.id },
+      { participants: { some: { userId: actor.id } } },
+    ],
+  };
 }
 
 export function canCreateProspect(actor: Actor) {

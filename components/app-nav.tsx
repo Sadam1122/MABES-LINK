@@ -3,6 +3,7 @@
 import {
   Bell,
   BriefcaseBusiness,
+  CalendarDays,
   LayoutDashboard,
   LogOut,
   MapPinned,
@@ -14,10 +15,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
+import { useFeedback } from "@/components/ui/feedback";
 
 const items = [
   { href: "/dashboard", label: "Beranda", icon: LayoutDashboard },
   { href: "/work", label: "Akuisisi Nasabah", mobileLabel: "Akuisisi", icon: BriefcaseBusiness },
+  { href: "/appointment-map", label: "Mapping Janji", mobileLabel: "Peta Janji", icon: CalendarDays },
   { href: "/mapping", label: "Mapping", icon: MapPinned },
   { href: "/notifications", label: "Notifikasi", icon: Bell },
   { href: "/notification-settings", label: "Pengaturan Notifikasi", mobileLabel: "Pengaturan", icon: SlidersHorizontal },
@@ -36,15 +39,22 @@ export function AppNav({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
   const navItems = isAdmin
     ? [...items, { href: "/admin", label: "Manajemen Pengguna", mobileLabel: "Akun", icon: Users }]
     : items;
   const signOut = async () => {
+    if (!(await confirm({ title: "Keluar dari MABES LINK?", description: "Sesi pada perangkat ini akan diakhiri. Pastikan perubahan pekerjaan sudah disimpan.", confirmLabel: "Ya, keluar", tone: "danger" }))) return;
     setBusy(true);
-    await authClient.signOut();
-    router.replace("/login");
-    router.refresh();
+    try {
+      await authClient.signOut();
+      router.replace("/login");
+      router.refresh();
+    } catch {
+      toast("Sesi belum dapat diakhiri. Coba lagi.", "error");
+      setBusy(false);
+    }
   };
   const links = navItems.map(({ href, label, mobileLabel, icon: Icon }) => {
     const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -76,7 +86,18 @@ export function AppNav({
         className="fixed inset-x-0 bottom-0 z-[1200] flex h-[72px] items-start gap-1 overflow-x-auto border-t bg-white px-2 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,.08)] lg:hidden"
         aria-label="Navigasi seluler"
       >
-        <div className="flex min-w-max flex-1 justify-around gap-1">{links}</div>
+        <div className="flex min-w-max flex-1 justify-around gap-1">
+          {links}
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            disabled={busy}
+            className="flex min-h-11 min-w-14 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[10px] font-bold text-red-600 disabled:opacity-50"
+          >
+            <LogOut size={20} />
+            <span>{busy ? "Keluar…" : "Keluar"}</span>
+          </button>
+        </div>
       </nav>
     );
   return (

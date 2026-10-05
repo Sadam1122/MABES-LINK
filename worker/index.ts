@@ -3,6 +3,7 @@ import "../scripts/load-env";
 import { db } from "../lib/db";
 import { workerTick } from "../lib/notifications";
 import { validateWorkerEnvironment } from "../lib/env-validation";
+import { cleanupExpiredQrisSessions } from "../lib/qris-cleanup";
 
 validateWorkerEnvironment();
 
@@ -12,11 +13,16 @@ const interval = Math.max(
 );
 const workerId = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 let stopping = false;
+let lastQrisCleanup = 0;
 
 async function tick() {
   try {
     const count = await workerTick(db, workerId);
     if (count) console.log(`[${workerId}] ${count} job diproses.`);
+    if (Date.now() - lastQrisCleanup > 15 * 60_000) {
+      lastQrisCleanup = Date.now();
+      await cleanupExpiredQrisSessions();
+    }
   } catch (error) {
     console.error(`[${workerId}] tick gagal`, error);
   }

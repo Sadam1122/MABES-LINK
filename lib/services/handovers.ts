@@ -87,16 +87,14 @@ export async function listHandovers(actor: Actor, input: PageInput) {
     ],
   };
   const skip = (input.page - 1) * input.pageSize;
-  const [items, total] = await db.$transaction([
-    db.handoverBatch.findMany({
+  const items = await db.handoverBatch.findMany({
       where,
       include: handoverInclude,
       orderBy: { updatedAt: "desc" },
       skip,
       take: input.pageSize,
-    }),
-    db.handoverBatch.count({ where }),
-  ]);
+  });
+  const total = await db.handoverBatch.count({ where });
   return {
     items,
     pagination: {

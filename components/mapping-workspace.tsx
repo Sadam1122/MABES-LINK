@@ -5,6 +5,14 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
+  Building2,
+  HeartPulse,
+  ShoppingBasket,
+  Store,
+  Utensils,
+  Wrench,
+} from "lucide-react";
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -26,6 +34,10 @@ import {
   isWithinManggaBesarBoundary,
   MANGGA_BESAR_BOUNDARY_SOURCE,
 } from "@/lib/mangga-besar-boundary";
+import {
+  mappingMarkerIconOptions,
+  type MappingMarkerIconValue,
+} from "@/lib/mapping-icons";
 
 const LeafletMap = dynamic(() => import("@/components/mapping-map"), {
   ssr: false,
@@ -40,6 +52,7 @@ type Prospect = {
   id: string;
   internalCode: string;
   businessAlias: string;
+  publicQrisRequestId?: string | null;
   contactPic: string;
   areaBlock: string | null;
   businessSector: string | null;
@@ -50,15 +63,29 @@ type Prospect = {
   longitude: number | null;
   locationUpdatedAt: string | null;
   locationSource: string | null;
+  mappingMarkerIcon: MappingMarkerIconValue;
   version: number;
   opportunityStage: string;
   assignedTo: { id: string; name: string };
   visits: { visitedAt: string; outcome: string; notes: string }[];
   followUps: { dueAt: string }[];
   locationPhotos: { id: string; width: number; height: number }[];
-  usageVerifications: { id: string; usedAt: string; evidenceReference: string }[];
+  usageVerifications: {
+    id: string;
+    usedAt: string;
+    evidenceReference: string;
+  }[];
 };
 type Position = { latitude: number; longitude: number; accuracy: number };
+
+const markerIconComponents = {
+  STORE: Store,
+  FOOD: Utensils,
+  MARKET: ShoppingBasket,
+  OFFICE: Building2,
+  HEALTH: HeartPulse,
+  SERVICE: Wrench,
+} satisfies Record<MappingMarkerIconValue, typeof Store>;
 
 export function MappingWorkspace({
   prospects,
@@ -76,10 +103,16 @@ export function MappingWorkspace({
     prospects[0] ?? null,
   );
   const [point, setPoint] = useState<{ lat: number; lng: number } | null>(null);
-  const [pointSource, setPointSource] = useState<"MAP_PIN" | "MANUAL_COORDINATES" | "DEVICE_GEOLOCATION">("MAP_PIN");
+  const [pointSource, setPointSource] = useState<
+    "MAP_PIN" | "MANUAL_COORDINATES" | "DEVICE_GEOLOCATION"
+  >("MAP_PIN");
   const [manualLat, setManualLat] = useState("");
   const [manualLng, setManualLng] = useState("");
   const [label, setLabel] = useState(prospects[0]?.locationLabel ?? "");
+  const [selectedMarkerIcon, setSelectedMarkerIcon] =
+    useState<MappingMarkerIconValue>(
+      prospects[0]?.mappingMarkerIcon ?? "STORE",
+    );
   const [userPosition, setUserPosition] = useState<Position | null>(null);
   const [geoMessage, setGeoMessage] = useState("");
   const [sortNearest, setSortNearest] = useState(false);
@@ -94,6 +127,11 @@ export function MappingWorkspace({
   const [actionNeededOnly, setActionNeededOnly] = useState(false);
   const [showBoundary, setShowBoundary] = useState(true);
   const [focusRequest, setFocusRequest] = useState(1);
+  const [fitRequest, setFitRequest] = useState(0);
+  const [markerPalette, setMarkerPalette] = useState<
+    "status" | "blue" | "green" | "purple"
+  >("status");
+  const [markerScale, setMarkerScale] = useState(40);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
@@ -148,7 +186,14 @@ export function MappingWorkspace({
   );
 
   const categoryOptions = useMemo(
-    () => Array.from(new Set(prospects.map((item) => item.businessSector).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b, "id")),
+    () =>
+      Array.from(
+        new Set(
+          prospects
+            .map((item) => item.businessSector)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b, "id")),
     [prospects],
   );
 
@@ -172,7 +217,9 @@ export function MappingWorkspace({
             item.contactPic,
             item.locationLabel,
             item.assignedTo.name,
-          ].some((value) => value?.toLocaleLowerCase("id").includes(normalizedSearch))
+          ].some((value) =>
+            value?.toLocaleLowerCase("id").includes(normalizedSearch),
+          )
         )
           return false;
         if (picFilter !== "all" && item.assignedTo.id !== picFilter)
@@ -181,7 +228,9 @@ export function MappingWorkspace({
           return false;
         if (categoryFilter !== "all" && item.businessSector !== categoryFilter)
           return false;
-        const dueAt = item.followUps[0]?.dueAt ? new Date(item.followUps[0].dueAt) : null;
+        const dueAt = item.followUps[0]?.dueAt
+          ? new Date(item.followUps[0].dueAt)
+          : null;
         if (
           actionNeededOnly &&
           item.opportunityStage !== "NEED_CONFIRMED" &&
@@ -193,9 +242,14 @@ export function MappingWorkspace({
           if (!dueAt) return false;
           const today = jakartaDayKey(new Date(openedAt));
           const dueDay = jakartaDayKey(dueAt);
-          if (scheduleFilter === "overdue" && dueAt.getTime() >= openedAt) return false;
+          if (scheduleFilter === "overdue" && dueAt.getTime() >= openedAt)
+            return false;
           if (scheduleFilter === "today" && dueDay !== today) return false;
-          if (scheduleFilter === "upcoming" && (dueAt.getTime() <= openedAt || dueDay === today)) return false;
+          if (
+            scheduleFilter === "upcoming" &&
+            (dueAt.getTime() <= openedAt || dueDay === today)
+          )
+            return false;
         }
         if (boundaryFilter === "all") return true;
         const inside =
@@ -207,7 +261,17 @@ export function MappingWorkspace({
           );
         return boundaryFilter === "inside" ? inside : !inside;
       }),
-    [actionNeededOnly, boundaryFilter, categoryFilter, openedAt, picFilter, prospects, scheduleFilter, search, stageFilter],
+    [
+      actionNeededOnly,
+      boundaryFilter,
+      categoryFilter,
+      openedAt,
+      picFilter,
+      prospects,
+      scheduleFilter,
+      search,
+      stageFilter,
+    ],
   );
 
   const withDistance = useMemo(
@@ -253,6 +317,7 @@ export function MappingWorkspace({
           contactName: item.contactPic,
           productNeeds: item.productNeeds,
           usedAt: item.usageVerifications[0]?.usedAt ?? null,
+          markerIcon: item.mappingMarkerIcon,
         })),
     [filteredProspects, openedAt],
   );
@@ -260,6 +325,7 @@ export function MappingWorkspace({
   function choose(item: Prospect) {
     setSelected(item);
     setLabel(item.locationLabel ?? "");
+    setSelectedMarkerIcon(item.mappingMarkerIcon);
     setPoint(null);
     setPointSource("MAP_PIN");
     setManualLat("");
@@ -271,11 +337,18 @@ export function MappingWorkspace({
   async function saveLocation(candidate = point) {
     if (!selected || !candidate) return;
     const isInside = isWithinManggaBesarBoundary(candidate.lat, candidate.lng);
-    if (!(await confirm({ title: "Simpan lokasi tujuan?", description: `${isInside ? "" : "Titik berada di luar referensi batas Kelurahan Mangga Besar. "}Koordinat ${candidate.lat.toFixed(7)}, ${candidate.lng.toFixed(7)} akan disimpan.`, confirmLabel: "Simpan lokasi" }))) return;
+    if (
+      !(await confirm({
+        title: "Simpan lokasi tujuan?",
+        description: `${isInside ? "" : "Titik berada di luar referensi batas Kelurahan Mangga Besar. "}Koordinat ${candidate.lat.toFixed(7)}, ${candidate.lng.toFixed(7)} akan disimpan.`,
+        confirmLabel: "Simpan lokasi",
+      }))
+    )
+      return;
     setBusy(true);
     setError("");
     try {
-      await clientApi(`/api/prospects/${selected.id}`, {
+      await clientApi(`/api/mapping/${selected.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           version: selected.version,
@@ -283,6 +356,7 @@ export function MappingWorkspace({
           longitude: candidate.lng,
           locationLabel: label || null,
           locationSource: pointSource,
+          mappingMarkerIcon: selectedMarkerIcon,
         }),
       });
       toast("Lokasi berhasil disimpan.", "success");
@@ -290,6 +364,73 @@ export function MappingWorkspace({
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Lokasi gagal disimpan.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveMarkerIcon() {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      const hasCoordinates =
+        selected.latitude != null && selected.longitude != null;
+      await clientApi(`/api/mapping/${selected.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          version: selected.version,
+          latitude: hasCoordinates ? Number(selected.latitude) : null,
+          longitude: hasCoordinates ? Number(selected.longitude) : null,
+          locationLabel: selected.locationLabel,
+          locationSource: hasCoordinates
+            ? selected.locationSource || "MAP_PIN"
+            : null,
+          mappingMarkerIcon: selectedMarkerIcon,
+        }),
+      });
+      toast("Ikon marker berhasil disimpan.", "success");
+      location.reload();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Ikon marker gagal disimpan.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeLocation() {
+    if (!selected || !saved) return;
+    if (
+      !(await confirm({
+        title: "Hapus titik lokasi?",
+        description:
+          "Koordinat dan label lokasi akan dikosongkan. Foto dan riwayat audit tetap dipertahankan.",
+        confirmLabel: "Hapus titik",
+        tone: "danger",
+      }))
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      await clientApi(`/api/mapping/${selected.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          version: selected.version,
+          latitude: null,
+          longitude: null,
+          locationLabel: null,
+          locationSource: null,
+        }),
+      });
+      toast("Titik lokasi dihapus. Riwayat audit tetap tersedia.", "success");
+      location.reload();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Lokasi gagal dihapus.",
       );
     } finally {
       setBusy(false);
@@ -351,7 +492,16 @@ export function MappingWorkspace({
   }
 
   async function removePhoto(id: string) {
-    if (!(await confirm({ title: "Hapus gambar lokasi?", description: "Gambar akan dihapus dari penyimpanan privat dan perubahan dicatat.", confirmLabel: "Hapus gambar", tone: "danger" }))) return;
+    if (
+      !(await confirm({
+        title: "Hapus gambar lokasi?",
+        description:
+          "Gambar akan dihapus dari penyimpanan privat dan perubahan dicatat.",
+        confirmLabel: "Hapus gambar",
+        tone: "danger",
+      }))
+    )
+      return;
     await clientApi(`/api/location-photos/${id}`, { method: "DELETE" });
     toast("Gambar lokasi dihapus.", "success");
     location.reload();
@@ -418,7 +568,12 @@ export function MappingWorkspace({
         </div>
         <label className="text-xs font-bold text-slate-700 xl:col-start-1">
           Cari nama, toko, atau PIC
-          <input className="field mt-1" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari lokasi…" />
+          <input
+            className="field mt-1"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Cari lokasi…"
+          />
         </label>
         <label className="text-xs font-bold text-slate-700">
           Filter PIC
@@ -437,7 +592,11 @@ export function MappingWorkspace({
         </label>
         <label className="text-xs font-bold text-slate-700">
           Status akuisisi
-          <select className="field mt-1" value={stageFilter} onChange={(event) => setStageFilter(event.target.value)}>
+          <select
+            className="field mt-1"
+            value={stageFilter}
+            onChange={(event) => setStageFilter(event.target.value)}
+          >
             <option value="all">Semua status</option>
             <option value="NEW">Baru</option>
             <option value="NEED_CONFIRMED">Kebutuhan terkonfirmasi</option>
@@ -450,14 +609,26 @@ export function MappingWorkspace({
         </label>
         <label className="text-xs font-bold text-slate-700">
           Kategori usaha
-          <select className="field mt-1" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+          <select
+            className="field mt-1"
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(event.target.value)}
+          >
             <option value="all">Semua kategori</option>
-            {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+            {categoryOptions.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
           </select>
         </label>
         <label className="text-xs font-bold text-slate-700">
           Jadwal follow-up
-          <select className="field mt-1" value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value)}>
+          <select
+            className="field mt-1"
+            value={scheduleFilter}
+            onChange={(event) => setScheduleFilter(event.target.value)}
+          >
             <option value="all">Semua jadwal</option>
             <option value="overdue">Terlambat</option>
             <option value="today">Hari ini (WIB)</option>
@@ -482,10 +653,27 @@ export function MappingWorkspace({
           </select>
         </label>
         <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-sm font-bold text-slate-700">
-          <input type="checkbox" checked={actionNeededOnly} onChange={(event) => setActionNeededOnly(event.target.checked)} />
+          <input
+            type="checkbox"
+            checked={actionNeededOnly}
+            onChange={(event) => setActionNeededOnly(event.target.checked)}
+          />
           Perlu tindakan
         </label>
-        <Button variant="ghost" onClick={() => { setSearch(""); setPicFilter("all"); setStageFilter("all"); setCategoryFilter("all"); setScheduleFilter("all"); setBoundaryFilter("all"); setActionNeededOnly(false); }}>Reset filter</Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setSearch("");
+            setPicFilter("all");
+            setStageFilter("all");
+            setCategoryFilter("all");
+            setScheduleFilter("all");
+            setBoundaryFilter("all");
+            setActionNeededOnly(false);
+          }}
+        >
+          Reset filter
+        </Button>
       </section>
       <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
         <section className="space-y-4">
@@ -503,6 +691,48 @@ export function MappingWorkspace({
               >
                 Fokus Mangga Besar
               </Button>
+              <Button
+                variant="outline"
+                disabled={points.length === 0}
+                onClick={() => setFitRequest((value) => value + 1)}
+              >
+                Fokus hasil filter
+              </Button>
+              <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">
+                Warna marker
+                <select
+                  className="bg-transparent"
+                  value={markerPalette}
+                  onChange={(event) =>
+                    setMarkerPalette(
+                      event.target.value as
+                        | "status"
+                        | "blue"
+                        | "green"
+                        | "purple",
+                    )
+                  }
+                >
+                  <option value="status">Status</option>
+                  <option value="blue">Biru</option>
+                  <option value="green">Hijau</option>
+                  <option value="purple">Ungu</option>
+                </select>
+              </label>
+              <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">
+                Skala ikon {markerScale}px
+                <input
+                  aria-label="Skala ikon marker"
+                  type="range"
+                  min="30"
+                  max="58"
+                  step="2"
+                  value={markerScale}
+                  onChange={(event) =>
+                    setMarkerScale(Number(event.target.value))
+                  }
+                />
+              </label>
               <span className="text-xs text-slate-500">
                 Garis biru: referensi administratif, bukan penetapan wilayah
                 kerja.
@@ -516,6 +746,10 @@ export function MappingWorkspace({
               }
               showBoundary={showBoundary}
               focusRequest={focusRequest}
+              fitRequest={fitRequest}
+              markerPalette={markerPalette}
+              markerScale={markerScale}
+              selectedId={selected?.id ?? null}
               onPick={(lat, lng) => {
                 setPoint({ lat, lng });
                 setPointSource("MAP_PIN");
@@ -552,6 +786,50 @@ export function MappingWorkspace({
                   Posisi perangkat hanya dipakai sementara untuk cek jarak dan
                   tidak disimpan sebagai riwayat.
                 </p>
+              </div>
+              <div className="rounded-2xl border bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="label">Ikon penanda lokasi</p>
+                    <p className="text-xs text-slate-500">
+                      Ikon tersimpan pada lokasi dan terlihat oleh seluruh role
+                      yang berhak mengaksesnya.
+                    </p>
+                  </div>
+                  {selectedMarkerIcon !== selected.mappingMarkerIcon ? (
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void saveMarkerIcon()}
+                    >
+                      Simpan ikon
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {mappingMarkerIconOptions.map((option) => {
+                    const Icon = markerIconComponents[option.value];
+                    const active = selectedMarkerIcon === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        title={option.description}
+                        aria-label={`Gunakan ikon ${option.label}`}
+                        aria-pressed={active}
+                        onClick={() => setSelectedMarkerIcon(option.value)}
+                        className={`flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm font-bold transition ${
+                          active
+                            ? "border-blue-700 bg-blue-700 text-white"
+                            : "bg-white text-slate-700 hover:border-blue-300"
+                        }`}
+                      >
+                        <Icon size={17} />
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="label">
@@ -597,15 +875,13 @@ export function MappingWorkspace({
                 {userPosition && (
                   <Button
                     variant="outline"
-                    onClick={() =>
-                      {
-                        setPoint({
-                          lat: userPosition.latitude,
-                          lng: userPosition.longitude,
-                        });
-                        setPointSource("DEVICE_GEOLOCATION");
-                      }
-                    }
+                    onClick={() => {
+                      setPoint({
+                        lat: userPosition.latitude,
+                        lng: userPosition.longitude,
+                      });
+                      setPointSource("DEVICE_GEOLOCATION");
+                    }}
                   >
                     Pilih posisi saya
                   </Button>
@@ -635,32 +911,50 @@ export function MappingWorkspace({
               {saved && (
                 <div className="border-t pt-4">
                   <p className="mb-3 text-xs text-slate-500">
-                    Sumber: {selected.locationSource === "DEVICE_GEOLOCATION" ? "Lokasi perangkat" : selected.locationSource === "MANUAL_COORDINATES" ? "Koordinat manual" : selected.locationSource === "MAP_PIN" ? "Pin peta" : "Belum tercatat"}
-                    {selected.locationUpdatedAt ? ` · dicatat ${new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.locationUpdatedAt))} WIB` : ""}
+                    Sumber:{" "}
+                    {selected.locationSource === "DEVICE_GEOLOCATION"
+                      ? "Lokasi perangkat"
+                      : selected.locationSource === "MANUAL_COORDINATES"
+                        ? "Koordinat manual"
+                        : selected.locationSource === "MAP_PIN"
+                          ? "Pin peta"
+                          : "Belum tercatat"}
+                    {selected.locationUpdatedAt
+                      ? ` · dicatat ${new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.locationUpdatedAt))} WIB`
+                      : ""}
                   </p>
                   <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => void copyCoordinates()}
-                  >
-                    Salin koordinat
-                  </Button>
-                  <a
-                    className={buttonVariants({ variant: "outline" })}
-                    target="_blank"
-                    rel="noreferrer"
-                    href={googleMapsLocationUrl(saved)}
-                  >
-                    Buka Google Maps
-                  </a>
-                  <a
-                    className={buttonVariants()}
-                    target="_blank"
-                    rel="noreferrer"
-                    href={googleMapsNavigationUrl(saved)}
-                  >
-                    Navigasi
-                  </a>
+                    <Button
+                      variant="outline"
+                      onClick={() => void copyCoordinates()}
+                    >
+                      Salin koordinat
+                    </Button>
+                    <a
+                      className={buttonVariants({ variant: "outline" })}
+                      target="_blank"
+                      rel="noreferrer"
+                      href={googleMapsLocationUrl(saved)}
+                    >
+                      Buka Google Maps
+                    </a>
+                    <a
+                      className={buttonVariants()}
+                      target="_blank"
+                      rel="noreferrer"
+                      href={googleMapsNavigationUrl(saved)}
+                    >
+                      Navigasi
+                    </a>
+                    {canEdit ? (
+                      <Button
+                        variant="danger"
+                        disabled={busy}
+                        onClick={() => void removeLocation()}
+                      >
+                        Hapus titik
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               )}
@@ -766,16 +1060,23 @@ export function MappingWorkspace({
                   {item.assignedTo.name}
                 </p>
                 <p className="mt-2 text-xs font-semibold text-slate-700">
-                  Pengguna: {item.contactPic}
+                  {item.usageVerifications[0] ? "Pengguna" : "Kontak permintaan"}: {item.contactPic}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Produk: {item.productNeeds.length ? item.productNeeds.join(", ") : "Belum dirinci"}
+                  Produk:{" "}
+                  {item.productNeeds.length
+                    ? item.productNeeds.join(", ")
+                    : "Belum dirinci"}
                 </p>
                 {item.usageVerifications[0] ? (
                   <p className="mt-1 text-xs text-emerald-700">
-                    Penggunaan terverifikasi {new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium" }).format(new Date(item.usageVerifications[0].usedAt))}
+                    Penggunaan terverifikasi{" "}
+                    {new Intl.DateTimeFormat("id-ID", {
+                      timeZone: "Asia/Jakarta",
+                      dateStyle: "medium",
+                    }).format(new Date(item.usageVerifications[0].usedAt))}
                   </p>
-                ) : null}
+                ) : item.publicQrisRequestId ? <p className="mt-1 text-xs font-semibold text-amber-700">Permintaan QRIS Custom · penggunaan belum diverifikasi</p> : null}
                 {item.latitude != null && item.longitude != null && (
                   <p className="mt-1 text-xs font-semibold text-blue-700">
                     {isWithinManggaBesarBoundary(
@@ -786,7 +1087,21 @@ export function MappingWorkspace({
                       : "Di luar referensi batas"}
                   </p>
                 )}
-                {item.followUps[0]?.dueAt ? <p className="mt-2 text-xs font-semibold text-slate-700">Follow-up: {new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }).format(new Date(item.followUps[0].dueAt))} WIB</p> : <p className="mt-2 text-xs text-slate-400">Belum ada jadwal follow-up</p>}
+                {item.followUps[0]?.dueAt ? (
+                  <p className="mt-2 text-xs font-semibold text-slate-700">
+                    Follow-up:{" "}
+                    {new Intl.DateTimeFormat("id-ID", {
+                      timeZone: "Asia/Jakarta",
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }).format(new Date(item.followUps[0].dueAt))}{" "}
+                    WIB
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-400">
+                    Belum ada jadwal follow-up
+                  </p>
+                )}
                 {distance != null && (
                   <p className="mt-2 text-xs text-slate-500">
                     Jarak garis lurus; bukan jarak rute atau waktu tempuh.

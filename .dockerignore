@@ -1,6 +1,11 @@
 node_modules
 .next
 .git
+.claude
+.agents
+.windsurf
+.codex
+role.md
 .env
 .env.*
 !.env.example

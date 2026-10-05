@@ -1,15 +1,52 @@
-import { AppointmentStatus, Role, ServiceCaseStatus } from "@prisma/client";
+import {
+  AcquisitionStatus,
+  AppointmentStatus,
+  Role,
+  ServiceCaseStatus,
+} from "@prisma/client";
 import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { ServiceCaseForm } from "@/components/service-case-form";
-import { StatusBadge, statusLabel } from "@/components/status-badge";
+import { ServiceCaseDeleteButton } from "@/components/service-case-delete-button";
+import { StatusBadge } from "@/components/status-badge";
 import { buttonVariants } from "@/components/ui/button";
-import { prospectScope } from "@/lib/authorization";
+import { mappingProspectScope } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { formatDateTime } from "@/lib/format";
 import { requirePageActor } from "@/lib/session";
 import { listServiceCases } from "@/lib/services/service-cases";
+import {
+  acquisitionCatalog,
+  getAcquisitionCategory,
+  getAcquisitionProduct,
+} from "@/lib/acquisition-products";
+
+const acquisitionStatusLabel: Record<AcquisitionStatus, string> = {
+  PROSPECT: "Prospek",
+  FOLLOW_UP: "Follow Up",
+  PROCESS: "Proses",
+  SUCCESS: "Berhasil",
+  UNSUCCESSFUL: "Tidak Berhasil",
+};
+
+function formatMetric(value: unknown, unit: string | null) {
+  if (value == null) return "—";
+  const number = Number(value);
+  if (unit === "IDR")
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(number);
+  const label =
+    unit === "ACCOUNT"
+      ? "rekening"
+      : unit === "MERCHANT"
+        ? "merchant"
+        : "nasabah";
+  return `${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(number)} ${label}`;
+}
 
 export default async function WorkPage({
   searchParams,
@@ -30,83 +67,125 @@ export default async function WorkPage({
   )
     ? (value("appointmentStatus") as AppointmentStatus)
     : undefined;
-  const [data, prospectRows, officers] = await Promise.all([
-    listServiceCases(actor, {
-      page: Math.max(1, Number(value("page")) || 1),
-      pageSize: 30,
-      search: value("search"),
-      status,
-      appointmentStatus,
-      overdue: value("overdue") === "1",
-    }),
-    db.prospect.findMany({
-      where: prospectScope(actor),
-      select: {
-        id: true,
-        internalCode: true,
-        cakraReference: true,
-        businessAlias: true,
-        contactPic: true,
-        branchId: true,
-        version: true,
-        locationLabel: true,
-        latitude: true,
-        longitude: true,
-        locationSource: true,
-      },
-      orderBy: { updatedAt: "desc" },
-      take: 100,
-    }),
+  const acquisitionStatus = Object.values(AcquisitionStatus).includes(
+    value("acquisitionStatus") as AcquisitionStatus,
+  )
+    ? (value("acquisitionStatus") as AcquisitionStatus)
+    : undefined;
+  const acquisitionCategory = acquisitionCatalog.some(
+    (category) => category.id === value("acquisitionCategory"),
+  )
+    ? value("acquisitionCategory")
+    : undefined;
+  const data = await listServiceCases(actor, {
+    page: Math.max(1, Number(value("page")) || 1),
+    pageSize: 30,
+    search: value("search"),
+    status,
+    appointmentStatus,
+    acquisitionStatus,
+    acquisitionCategory,
+    overdue: value("overdue") === "1",
+  });
+  const officers =
     actor.branchId || actor.role === Role.ADMIN
-      ? db.user.findMany({
+      ? await db.user.findMany({
           where: {
             ...(actor.role === Role.ADMIN
               ? { branchId: { not: null } }
               : { branchId: actor.branchId }),
             active: true,
             isTest: false,
-            ...(actor.role !== Role.SUPERVISOR && actor.role !== Role.ADMIN
-              ? { id: actor.id }
-              : {}),
+            role: { in: [Role.OUT_BRANCH, Role.CS] },
           },
-          select: { id: true, name: true, branchId: true },
+          select: {
+            id: true,
+            name: true,
+            role: true,
+            branchId: true,
+            branch: { select: { code: true } },
+          },
           orderBy: { name: "asc" },
         })
+      : [];
+  const savedLocationRows = await db.prospect.findMany({
+    where: {
+      AND: [
+        mappingProspectScope(actor),
+        { latitude: { not: null }, longitude: { not: null } },
+      ],
+    },
+    select: {
+      id: true,
+      businessAlias: true,
+      locationLabel: true,
+      latitude: true,
+      longitude: true,
+    },
+    orderBy: { locationUpdatedAt: "desc" },
+    take: 100,
+  });
+  const savedLocations = savedLocationRows.flatMap((location) =>
+    location.latitude != null && location.longitude != null
+      ? [
+          {
+            id: location.id,
+            label: location.locationLabel || location.businessAlias,
+            detail: location.businessAlias,
+            latitude: Number(location.latitude),
+            longitude: Number(location.longitude),
+          },
+        ]
       : [],
-  ]);
-  const prospects = prospectRows.map((prospect) => ({
-    ...prospect,
-    latitude:
-      prospect.latitude == null ? null : Number(prospect.latitude),
-    longitude:
-      prospect.longitude == null ? null : Number(prospect.longitude),
-  }));
+  );
   return (
     <>
       <PageHeader
         eyebrow="Kendali layanan"
         title="Akuisisi Nasabah"
-        description="Buat janji dari referensi existing, tentukan orang yang ditemui, lokasi, dan waktu agar PIC menerima reminder internal."
+        description="Buat janji langsung, tentukan beberapa PIC internal, lokasi, dan waktu agar reminder dapat dipantau oleh cabang."
         actions={
-          actor.role === Role.OUT_BRANCH ||
-          actor.role === Role.SUPERVISOR ||
-          actor.role === Role.ADMIN ? (
-            <ServiceCaseForm prospects={prospects} officers={officers} />
-          ) : undefined
+          <ServiceCaseForm
+            officers={officers.map((officer) => ({
+              id: officer.id,
+              name: officer.name,
+              role: officer.role as "CS" | "OUT_BRANCH",
+              branchId: officer.branchId,
+              branchCode: officer.branch?.code ?? null,
+            }))}
+            savedLocations={savedLocations}
+            currentUserId={actor.id}
+          />
         }
       />
-      <form className="card mb-5 grid gap-3 p-4 md:grid-cols-4">
+      <form className="card mb-5 grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5">
         <input
           name="search"
           className="field"
           defaultValue={value("search")}
-          placeholder="Cari kode atau referensi…"
+          placeholder="Cari kode, nasabah, toko, atau produk…"
         />
-        <select name="status" className="field" defaultValue={status ?? ""}>
-          <option value="">Semua status</option>
-          {Object.values(ServiceCaseStatus).map((s) => (
-            <option key={s} value={s}>
-              {statusLabel(s)}
+        <select
+          name="acquisitionCategory"
+          className="field"
+          defaultValue={acquisitionCategory ?? ""}
+        >
+          <option value="">Semua kategori</option>
+          {acquisitionCatalog.map((category) => (
+            <option key={category.id} value={category.id}>
+              {category.label}
+            </option>
+          ))}
+        </select>
+        <select
+          name="acquisitionStatus"
+          className="field"
+          defaultValue={acquisitionStatus ?? ""}
+        >
+          <option value="">Semua status akuisisi</option>
+          {Object.values(AcquisitionStatus).map((item) => (
+            <option key={item} value={item}>
+              {acquisitionStatusLabel[item]}
             </option>
           ))}
         </select>
@@ -145,44 +224,88 @@ export default async function WorkPage({
       {data.items.length ? (
         <div className="grid gap-4 lg:grid-cols-2">
           {data.items.map((item) => (
-            <Link
+            <article
               key={item.id}
-              href={`/work/${item.id}`}
               className="card p-5 transition hover:shadow-lg"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-xs text-blue-700">{item.code}</p>
-                  <h2 className="mt-1 font-black">{item.title}</h2>
+              <Link
+                href={`/work/${item.id}`}
+                className="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-mono text-xs text-blue-700">
+                      {item.code}
+                    </p>
+                    <h2 className="mt-1 font-black">{item.title}</h2>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                      Akuisisi Nasabah &gt;{" "}
+                      {getAcquisitionCategory(item.acquisitionCategory)
+                        ?.label ?? "Belum dikategorikan"}{" "}
+                      &gt;{" "}
+                      {getAcquisitionProduct(
+                        item.acquisitionCategory,
+                        item.acquisitionProduct,
+                      )?.label ?? "Produk belum dipilih"}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-800">
+                    {acquisitionStatusLabel[item.acquisitionStatus]}
+                  </span>
                 </div>
-                <StatusBadge value={item.status} />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-xs text-slate-400">PIC</p>
-                  <p className="font-semibold">{item.pic.name}</p>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-400">PIC</p>
+                    <p className="font-semibold">
+                      {Array.from(
+                        new Set(item.participants.map((row) => row.user.name)),
+                      ).join(", ") || item.pic.name}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Tindak lanjut</p>
+                    <p className="font-semibold">
+                      {formatDateTime(item.dueAt)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Target</p>
+                    <p className="font-semibold">
+                      {formatMetric(item.targetValue, item.metricUnit)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Realisasi</p>
+                    <p className="font-semibold text-emerald-700">
+                      {formatMetric(item.realizationValue, item.metricUnit)}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-xs text-slate-400">Tindak lanjut</p>
-                  <p className="font-semibold">{formatDateTime(item.dueAt)}</p>
-                </div>
-              </div>
-              <div className="mt-4 flex items-center justify-between border-t pt-3">
+              </Link>
+              <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3">
                 <StatusBadge value={item.appointmentStatus} />
-                <span className="text-xs text-slate-500">
-                  {item.origin === "IN_BRANCH" ? "In-branch" : "Out-branch"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">
+                    {item.origin === "IN_BRANCH" ? "In-branch" : "Out-branch"}
+                  </span>
+                  {actor.role === Role.ADMIN ||
+                  actor.role === Role.SUPERVISOR ||
+                  item.createdById === actor.id ? (
+                    <ServiceCaseDeleteButton
+                      id={item.id}
+                      version={item.version}
+                    />
+                  ) : null}
+                </div>
               </div>
-            </Link>
+            </article>
           ))}
         </div>
       ) : (
         <EmptyState
           title="Belum ada pekerjaan"
           description={
-            prospects.length
-              ? "Buat janji akuisisi dari referensi existing yang berwenang Anda akses."
-              : "Belum ada referensi existing yang dapat digunakan. Hubungi pengelola sumber data resmi."
+            "Belum ada janji dalam cakupan Anda. Gunakan tombol Buat janji untuk menambahkan jadwal."
           }
         />
       )}

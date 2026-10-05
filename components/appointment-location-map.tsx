@@ -44,9 +44,11 @@ function FocusPoint({
 export default function AppointmentLocationMap({
   point,
   onPick,
+  pointLabel = "Titik janji",
 }: {
   point: { latitude: number; longitude: number } | null;
   onPick: (latitude: number, longitude: number) => void;
+  pointLabel?: string;
 }) {
   return (
     <MapContainer
@@ -98,7 +100,7 @@ export default function AppointmentLocationMap({
             weight: 3,
           }}
         >
-          <Tooltip>Titik janji</Tooltip>
+          <Tooltip>{pointLabel}</Tooltip>
         </CircleMarker>
       ) : null}
     </MapContainer>

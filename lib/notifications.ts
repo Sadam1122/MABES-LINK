@@ -178,35 +178,55 @@ export async function scheduleServiceCaseJobs(
   const preReminderAt = new Date(
     reminderAt.getTime() - minutes * 60_000,
   );
-  await tx.outboxJob.createMany({
-    data: [
-      {
+  const participants = await tx.serviceCaseParticipant.findMany({
+    where: { serviceCaseId: serviceCase.id },
+    select: { userId: true },
+  });
+  const recipients = Array.from(
+    new Set([serviceCase.picId, ...participants.map((item) => item.userId)]),
+  );
+  const data: Prisma.OutboxJobCreateManyInput[] = [];
+  for (const recipientId of recipients) {
+    const recipientPrefix = `${prefix}:recipient:${recipientId}`;
+    const baseJob = {
+      recipientId,
+      branchId,
+      serviceCaseId: serviceCase.id,
+      scheduleVersion: serviceCase.version,
+      isTest: serviceCase.isTest,
+      testNamespace: serviceCase.testNamespace,
+    };
+    if (confirmedAppointment) {
+      data.push(
+        ...[30, 25, 20, 15, 10, 5]
+          .map((minutesBefore) => ({
+            ...baseJob,
+            type: OutboxJobType.APPOINTMENT_PRE_DUE,
+            dedupKey: `${recipientPrefix}:pre:${minutesBefore}`,
+            runAt: new Date(reminderAt.getTime() - minutesBefore * 60_000),
+            payload: { minutesBefore },
+          }))
+          .filter((job) => job.runAt.getTime() >= Date.now() - 60_000),
+      );
+    } else {
+      data.push({
+        ...baseJob,
         type: OutboxJobType.APPOINTMENT_PRE_DUE,
-        dedupKey: `${prefix}:pre`,
-        recipientId: serviceCase.picId,
-        branchId,
-        serviceCaseId: serviceCase.id,
-        scheduleVersion: serviceCase.version,
-        runAt: confirmedAppointment
-          ? preReminderAt
-          : applyJakartaQuietHours(preReminderAt, quietStart, quietEnd),
-        isTest: serviceCase.isTest,
-        testNamespace: serviceCase.testNamespace,
-      },
-      {
-        type: OutboxJobType.APPOINTMENT_ACTION_DUE,
-        dedupKey: `${prefix}:due`,
-        recipientId: serviceCase.picId,
-        branchId,
-        serviceCaseId: serviceCase.id,
-        scheduleVersion: serviceCase.version,
-        runAt: confirmedAppointment
-          ? reminderAt
-          : applyJakartaQuietHours(reminderAt, quietStart, quietEnd),
-        isTest: serviceCase.isTest,
-        testNamespace: serviceCase.testNamespace,
-      },
-    ],
+        dedupKey: `${recipientPrefix}:pre`,
+        runAt: applyJakartaQuietHours(preReminderAt, quietStart, quietEnd),
+      });
+    }
+    data.push({
+      ...baseJob,
+      type: OutboxJobType.APPOINTMENT_ACTION_DUE,
+      dedupKey: `${recipientPrefix}:due`,
+      runAt: confirmedAppointment
+        ? reminderAt
+        : applyJakartaQuietHours(reminderAt, quietStart, quietEnd),
+    });
+  }
+  await tx.outboxJob.createMany({
+    data,
     skipDuplicates: true,
   });
 }
@@ -517,12 +537,19 @@ export async function processJob(
   if (job.serviceCaseId) {
     const serviceCase = await client.serviceCase.findUnique({
       where: { id: job.serviceCaseId },
-      include: { prospect: { select: { internalCode: true } } },
+      include: {
+        prospect: { select: { internalCode: true } },
+        participants: { select: { userId: true } },
+      },
     });
+    const validRecipient =
+      serviceCase?.picId === job.recipientId ||
+      serviceCase?.participants.some((item) => item.userId === job.recipientId);
     if (
       !serviceCase ||
+      serviceCase.deletedAt !== null ||
       serviceCase.version !== job.scheduleVersion ||
-      serviceCase.picId !== job.recipientId ||
+      !validRecipient ||
       (serviceCase.appointmentStatus !== AppointmentStatus.NEEDS_SCHEDULING &&
         serviceCase.appointmentStatus !==
           AppointmentStatus.PENDING_CONFIRMATION &&
@@ -601,19 +628,22 @@ export async function processJob(
         : "Follow-up jatuh tempo";
     message = `${code} memerlukan tindakan pada jadwal yang tercatat.`;
   } else {
-    const [legacyOverdue, serviceCaseOverdue] = await client.$transaction([
-      client.followUp.count({
+    const legacyOverdue = await client.followUp.count({
         where: {
           assignedToId: job.recipientId,
           status: FollowUpStatus.PLANNED,
           dueAt: { lt: now },
           prospect: { isTest: false },
         },
-      }),
-      client.serviceCase.count({
+    });
+    const serviceCaseOverdue = await client.serviceCase.count({
         where: {
-          picId: job.recipientId,
+          OR: [
+            { picId: job.recipientId },
+            { participants: { some: { userId: job.recipientId } } },
+          ],
           isTest: false,
+          deletedAt: null,
           dueAt: { lt: now },
           appointmentStatus: {
             in: [
@@ -626,8 +656,7 @@ export async function processJob(
             notIn: ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"],
           },
         },
-      }),
-    ]);
+    });
     const overdue = legacyOverdue + serviceCaseOverdue;
     if (overdue === 0) {
       await client.outboxJob.update({
@@ -693,8 +722,8 @@ export async function processJob(
     email.status === EmailDeliveryStatus.FAILED ||
     email.status === EmailDeliveryStatus.QUOTA_BLOCKED;
   const shouldRetry = retryableEmailFailure && job.attempts < job.maxAttempts;
-  await client.$transaction([
-    client.emailDelivery.upsert({
+  await client.$transaction(async (tx) => {
+    await tx.emailDelivery.upsert({
       where: { outboxJobId: job.id },
       create: {
         outboxJobId: job.id,
@@ -709,8 +738,8 @@ export async function processJob(
         acceptedAt:
           email.status === EmailDeliveryStatus.SMTP_ACCEPTED ? now : null,
       },
-    }),
-    client.outboxJob.update({
+    });
+    await tx.outboxJob.update({
       where: { id: job.id },
       data: {
         status:
@@ -730,8 +759,8 @@ export async function processJob(
         lockedAt: null,
         leaseExpiresAt: null,
       },
-    }),
-  ]);
+    });
+  });
 }
 
 export async function workerTick(

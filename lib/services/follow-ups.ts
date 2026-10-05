@@ -70,8 +70,7 @@ export async function listFollowUps(actor: Actor, input: PageInput) {
     ],
   };
   const skip = (input.page - 1) * input.pageSize;
-  const [items, total] = await db.$transaction([
-    db.followUp.findMany({
+  const items = await db.followUp.findMany({
       where,
       include: {
         prospect: true,
@@ -80,9 +79,8 @@ export async function listFollowUps(actor: Actor, input: PageInput) {
       orderBy: [{ status: "asc" }, { dueAt: "asc" }],
       skip,
       take: input.pageSize,
-    }),
-    db.followUp.count({ where }),
-  ]);
+  });
+  const total = await db.followUp.count({ where });
   return {
     items,
     pagination: {
