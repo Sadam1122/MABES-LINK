@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { getActor } from "@/lib/session";
 
 export default async function HomePage() {
@@ -26,8 +27,8 @@ export default async function HomePage() {
             QRIS usahamu, <span className="text-[#f5b72d]">gayamu.</span>
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-8 text-blue-100">
-            Upload QRIS resmi, pilih desain, custom tampilan, lalu download
-            untuk dicetak.
+            Unggah QRIS resmi, pilih Batik Nusantara atau Alam Indonesia,
+            tambahkan tulisan dan stiker di panel bawah, lalu unduh PNG.
           </p>
           <div className="mt-9 flex flex-wrap gap-3">
             <Link
@@ -49,22 +50,12 @@ export default async function HomePage() {
           </p>
         </div>
         <div className="rounded-[2rem] border border-white/20 bg-white/10 p-6 shadow-2xl">
-          <div className="rounded-2xl bg-white p-5 text-[#102b58]">
-            <div className="rounded-xl bg-[#102b58] p-6 text-white">
-              <p className="text-xl font-black">NUSANTARA</p>
-              <p className="mt-1 text-sm text-[#f5b72d]">
-                Terima pembayaran dengan mudah
-              </p>
-              <div className="mx-auto mt-8 grid aspect-square max-w-[240px] place-items-center rounded-xl bg-white text-center text-xs font-bold text-slate-500">
-                QRIS resmi Anda di sini
-              </div>
-              <p className="mt-8 text-center text-xs">
-                Tampilan khusus untuk usaha Anda
-              </p>
-            </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Image src="/qris-template/template-batik-nusantara.png" alt="Pilihan desain Batik Nusantara" width={1064} height={1478} className="w-full rounded-xl bg-white shadow-lg" />
+            <Image src="/qris-template/template-alam-indonesia.png" alt="Pilihan desain Alam Indonesia" width={1064} height={1478} className="w-full rounded-xl bg-white shadow-lg" />
           </div>
           <p className="mt-4 text-center text-xs text-blue-100">
-            QRIS tidak diterbitkan melalui halaman ini.
+            Bingkai/desain QRIS gratis. QRIS tidak diterbitkan melalui halaman ini.
           </p>
         </div>
       </section>

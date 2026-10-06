@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
 import { BrandLogo } from "@/components/brand-logo";
+import { QrisPromo } from "@/components/qris-promo";
 import { Badge } from "@/components/ui/badge";
 import { getActor } from "@/lib/session";
 
@@ -40,6 +41,9 @@ export default async function LoginPage() {
           </p>
           <div className="card p-5 sm:p-7">
             <LoginForm />
+          </div>
+          <div className="mt-5">
+            <QrisPromo compact />
           </div>
           <p className="mt-5 text-center text-xs leading-5 text-slate-400">
             KCP Mandiri Jakarta Mangga Besar · 11539 · B.2

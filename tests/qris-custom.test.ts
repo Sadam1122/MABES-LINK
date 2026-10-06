@@ -33,6 +33,11 @@ const design: QrisDesign = {
   frame: "ROUND",
   ornament: "STAR",
   inkSaver: false,
+  bottomText: "",
+  sticker: "NONE",
+  stickerDataUrl: "",
+  stickerSide: "RIGHT",
+  stickerY: 0.5,
 };
 
 describe("QRIS Custom publik", () => {

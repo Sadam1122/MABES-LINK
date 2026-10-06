@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
+import { QrisPromo } from "@/components/qris-promo";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/format";
@@ -70,6 +71,9 @@ export default async function DashboardPage() {
           </Link>
         }
       />
+      <div className="mb-6">
+        <QrisPromo />
+      </div>
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map(({ label, value, icon: Icon, tone }) => (
           <div className="card flex items-center gap-4 p-5" key={label}>

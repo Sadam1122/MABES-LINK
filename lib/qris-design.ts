@@ -2,27 +2,40 @@ import { z } from "zod";
 
 export const qrisTemplates = [
   {
-    id: "SIGNATURE",
-    label: "Mandiri Nusantara Signature",
+    id: "BATIK_NUSANTARA",
+    label: "Batik Nusantara",
+    image: "/qris-template/template-batik-nusantara.png",
     primary: "#0b2248",
     secondary: "#c9a64b",
   },
   {
-    id: "HERITAGE",
-    label: "Mandiri Heritage Indonesia",
-    primary: "#f7f0dc",
-    secondary: "#9e342e",
-  },
-  {
-    id: "FUTURE",
-    label: "Mandiri Archipelago Future",
-    primary: "#071b37",
-    secondary: "#20b9ef",
+    id: "ALAM_INDONESIA",
+    label: "Alam Indonesia",
+    image: "/qris-template/template-alam-indonesia.png",
+    primary: "#062b41",
+    secondary: "#cfad67",
   },
 ] as const;
 
+export const qrisTemplateZones = {
+  BATIK_NUSANTARA: {
+    file: "template-batik-nusantara.png",
+    qr: { x: 148, y: 205, width: 768, height: 1044 },
+    bottom: { x: 178, y: 1318, width: 708, height: 87 },
+  },
+  ALAM_INDONESIA: {
+    file: "template-alam-indonesia.png",
+    qr: { x: 207, y: 269, width: 650, height: 900 },
+    bottom: { x: 116, y: 1325, width: 832, height: 94 },
+  },
+} as const;
+
+export function isSuppliedQrisTemplate(template: string): template is keyof typeof qrisTemplateZones {
+  return template in qrisTemplateZones;
+}
+
 export const qrisDesignSchema = z.object({
-  template: z.enum(["SIGNATURE", "HERITAGE", "FUTURE"]),
+  template: z.enum(["BATIK_NUSANTARA", "ALAM_INDONESIA", "SIGNATURE", "HERITAGE", "FUTURE"]),
   size: z.enum(["A5", "A6"]),
   businessName: z.string().trim().min(2).max(80),
   tagline: z.string().trim().max(100).default("Terima pembayaran dengan mudah"),
@@ -35,6 +48,11 @@ export const qrisDesignSchema = z.object({
   frame: z.enum(["ROUND", "CLASSIC", "NONE"]),
   ornament: z.enum(["STAR", "LEAF", "SPARK", "NONE"]),
   inkSaver: z.boolean(),
+  bottomText: z.string().trim().max(72).default(""),
+  sticker: z.enum(["NONE", "FLOWER", "STAR", "SPARKLE", "UPLOAD"]).default("NONE"),
+  stickerDataUrl: z.string().max(440_000).default(""),
+  stickerSide: z.enum(["LEFT", "RIGHT"]).default("RIGHT"),
+  stickerY: z.number().min(0).max(1).default(0.5),
 });
 
 export type QrisDesign = z.infer<typeof qrisDesignSchema>;

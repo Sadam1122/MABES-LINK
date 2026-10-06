@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { qrisTemplates, type QrisDesign } from "@/lib/qris-design";
+import { isSuppliedQrisTemplate, qrisTemplates, type QrisDesign } from "@/lib/qris-design";
 
 const LocationMap = dynamic(
   () => import("@/components/appointment-location-map"),
@@ -71,7 +71,7 @@ const initialContact: Contact = {
   needNote: "",
 };
 const initialDesign: QrisDesign = {
-  template: "SIGNATURE",
+  template: "BATIK_NUSANTARA",
   size: "A5",
   businessName: "",
   tagline: "Terima pembayaran dengan mudah",
@@ -84,6 +84,11 @@ const initialDesign: QrisDesign = {
   frame: "ROUND",
   ornament: "STAR",
   inkSaver: false,
+  bottomText: "",
+  sticker: "NONE",
+  stickerDataUrl: "",
+  stickerSide: "RIGHT",
+  stickerY: 0.5,
 };
 const steps = ["Informasi", "QRIS Resmi", "Template", "Kustomisasi", "Hasil"];
 const field =
@@ -163,27 +168,26 @@ export function QrisCustomEditor() {
       template,
       primary: item.primary,
       secondary: item.secondary,
-      pattern:
-        template === "FUTURE"
-          ? "TOPOGRAPHY"
-          : template === "HERITAGE"
-            ? "LINES"
-            : "WAVES",
-      ornament: template === "HERITAGE" ? "LEAF" : "STAR",
     });
   }
   function automaticDesign() {
-    const name = contact.businessName.toLowerCase();
-    preset(
-      /kopi|makan|resto|kuliner|cafe/.test(name)
-        ? "HERITAGE"
-        : /digital|tech|studio/.test(name)
-          ? "FUTURE"
-          : "SIGNATURE",
-    );
-    setError(
-      "Rekomendasi dipilih dari kategori/nama usaha. Silakan tinjau sebelum mengunduh.",
-    );
+    preset("BATIK_NUSANTARA");
+  }
+  function selectStickerFile(chosen: File | null, side?: QrisDesign["stickerSide"]) {
+    if (!chosen) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(chosen.type) || chosen.size > 320 * 1024) {
+      setError("Stiker harus PNG, JPG, atau WebP dengan ukuran maksimal 320 KB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        changeDesign({ sticker: "UPLOAD", stickerDataUrl: reader.result, stickerSide: side ?? design.stickerSide });
+        setError("");
+      }
+    };
+    reader.onerror = () => setError("Gambar stiker tidak dapat dibaca.");
+    reader.readAsDataURL(chosen);
   }
   function validateContact() {
     if (
@@ -294,7 +298,7 @@ export function QrisCustomEditor() {
         if (download) {
           const anchor = document.createElement("a");
           anchor.href = url;
-          anchor.download = `qris-custom-${design.size.toLowerCase()}.${format}`;
+          anchor.download = `qris-${design.template.toLowerCase().replaceAll("_", "-")}.${format}`;
           anchor.click();
           setTimeout(() => URL.revokeObjectURL(url), 30_000);
         } else {
@@ -784,11 +788,11 @@ export function QrisCustomEditor() {
             <div>
               <h2 className="text-xl font-black">Pilih template</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Tiga gaya visual untuk menampilkan QRIS resmi Anda. Pilih yang
-                paling cocok dengan karakter usaha.
+                Dua bingkai/desain QRIS gratis. Logo, bingkai, dan ruang QRIS
+                tetap utuh pada kedua pilihan.
               </p>
             </div>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2">
               {qrisTemplates.map((item) => (
                 <button
                   key={item.id}
@@ -796,27 +800,8 @@ export function QrisCustomEditor() {
                   onClick={() => preset(item.id)}
                   className={`overflow-hidden rounded-2xl border-2 text-left transition hover:-translate-y-1 hover:shadow-lg ${design.template === item.id ? "border-blue-700" : "border-slate-200"}`}
                 >
-                  <div
-                    className="relative h-52 p-5"
-                    style={{ background: item.primary }}
-                  >
-                    <div
-                      className="text-lg font-black"
-                      style={{
-                        color: item.id === "HERITAGE" ? "#122b52" : "#fff",
-                      }}
-                    >
-                      {contact.businessName || "Nama Usaha"}
-                    </div>
-                    <div className="absolute inset-x-8 top-20 grid h-24 place-items-center rounded-xl border-4 border-white bg-white text-sm font-bold text-slate-500">
-                      AREA QRIS TERKUNCI
-                    </div>
-                    <div
-                      className="absolute bottom-4 left-5 text-xs font-bold"
-                      style={{ color: item.secondary }}
-                    >
-                      QRIS Usahamu, Gayamu.
-                    </div>
+                  <div className="grid h-72 place-items-center bg-slate-100 p-3">
+                    <img src={item.image} alt={`Template ${item.label}`} className="h-full max-w-full object-contain" />
                   </div>
                   <div className="flex items-center justify-between p-4 font-bold">
                     {item.label}
@@ -842,10 +827,82 @@ export function QrisCustomEditor() {
             <div>
               <h2 className="text-xl font-black">Kustomisasi tampilan</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Anda dapat mengubah elemen di luar area QRIS. Hasil akhir
-                diperiksa agar kode tetap terbaca.
+                Ubah tulisan pada panel bawah dan tambahkan satu stiker jika
+                diinginkan. Logo, bingkai, dan area QRIS tidak dapat diedit.
               </p>
             </div>
+            {isSuppliedQrisTemplate(design.template) && (
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="space-y-5 rounded-2xl border bg-white p-5">
+                  <label className="block text-sm font-semibold">
+                    Tulisan di panel bawah
+                    <input
+                      className={field}
+                      maxLength={72}
+                      value={design.bottomText}
+                      placeholder={contact.businessName || "Contoh: Terima kasih sudah berbelanja"}
+                      onChange={(event) => changeDesign({ bottomText: event.target.value })}
+                    />
+                    <span className="mt-1 block text-xs font-normal text-slate-500">Kosongkan untuk memakai nama usaha. Maksimal 72 karakter.</span>
+                  </label>
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Stiker opsional</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([ ["NONE", "Tanpa stiker"], ["FLOWER", "✿ Bunga"], ["STAR", "★ Bintang"], ["SPARKLE", "✦ Kilau"] ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          draggable={value !== "NONE"}
+                          onDragStart={(event) => event.dataTransfer.setData("text/sticker", value)}
+                          onClick={() => changeDesign({ sticker: value })}
+                          className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${design.sticker === value ? "border-blue-700 bg-blue-50 text-blue-800" : "border-slate-300 hover:border-blue-400"}`}
+                        >{label}</button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-500">Klik stiker, atau seret ke sisi kiri/kanan panel bawah pada pratinjau.</p>
+                  </div>
+                  <label className="block text-sm font-semibold">
+                    Unggah stiker sendiri (opsional)
+                    <input type="file" accept="image/png,image/jpeg,image/webp" className={field} onChange={(event) => selectStickerFile(event.target.files?.[0] ?? null)} />
+                    <span className="mt-1 block text-xs font-normal text-slate-500">PNG/JPG/WebP, 64–2000 px per sisi, maksimal 320 KB. Gambar diperkecil tanpa metadata sebelum ditempel.</span>
+                  </label>
+                  {design.sticker !== "NONE" && (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-sm font-semibold">Posisi stiker
+                        <select className={field} value={design.stickerSide} onChange={(event) => changeDesign({ stickerSide: event.target.value as QrisDesign["stickerSide"] })}>
+                          <option value="LEFT">Kiri</option><option value="RIGHT">Kanan</option>
+                        </select>
+                      </label>
+                      <label className="text-sm font-semibold">Tinggi stiker
+                        <input type="range" min="0" max="1" step="0.05" value={design.stickerY} onChange={(event) => changeDesign({ stickerY: Number(event.target.value) })} className="mt-4 w-full" />
+                      </label>
+                    </div>
+                  )}
+                  <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Stiker hanya dapat berada di sisi panel bawah. Foto atau dokumen pribadi jangan diunggah.</p>
+                </div>
+                <div className="rounded-2xl bg-slate-100 p-4 sm:p-6">
+                  <div className="relative mx-auto w-full max-w-[360px] overflow-hidden rounded-lg bg-white shadow-xl" style={{ aspectRatio: "1064 / 1478" }}>
+                    {preview ? <img src={preview} alt="Pratinjau desain QRIS" className="h-full w-full object-contain" /> : <div className="grid h-full place-items-center text-sm text-slate-500">{busy ? "Menyiapkan pratinjau…" : "Pratinjau belum tersedia"}</div>}
+                    <div
+                      role="region"
+                      aria-label="Area penempatan stiker pada panel bawah"
+                      className="absolute z-10 rounded border border-dashed border-blue-500/40 hover:bg-blue-100/20"
+                      style={design.template === "BATIK_NUSANTARA" ? { left: "16.7%", top: "89.2%", width: "66.5%", height: "5.9%" } : { left: "10.9%", top: "89.6%", width: "78.2%", height: "6.3%" }}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const value = event.dataTransfer.getData("text/sticker");
+                        const side = event.clientX < event.currentTarget.getBoundingClientRect().left + event.currentTarget.getBoundingClientRect().width / 2 ? "LEFT" : "RIGHT";
+                        if (["FLOWER", "STAR", "SPARKLE"].includes(value)) changeDesign({ sticker: value as QrisDesign["sticker"], stickerSide: side });
+                        else if (event.dataTransfer.files.length) selectStickerFile(event.dataTransfer.files[0], side);
+                      }}
+                    />
+                  </div>
+                  <p className="mt-3 text-center text-xs text-slate-600">Pratinjau mengikuti hasil PNG. Area tengah dan logo tetap terkunci.</p>
+                </div>
+              </div>
+            )}
+            {!isSuppliedQrisTemplate(design.template) && (
             <div className="grid gap-5 lg:grid-cols-2">
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="text-sm font-semibold sm:col-span-2">
@@ -1121,6 +1178,7 @@ export function QrisCustomEditor() {
                 </div>
               </div>
             </div>
+            )}
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setStep(2)}>
                 <ArrowLeft className="h-4 w-4" /> Kembali
@@ -1179,7 +1237,12 @@ export function QrisCustomEditor() {
                 )}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            {isSuppliedQrisTemplate(design.template) && (
+              <Button variant="outline" disabled={busy} onClick={() => void render("png")}>
+                Perbarui pratinjau
+              </Button>
+            )}
+            {!isSuppliedQrisTemplate(design.template) && <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 rounded-xl border p-3 text-sm">
                 <input
                   type="checkbox"
@@ -1211,9 +1274,9 @@ export function QrisCustomEditor() {
               >
                 Perbarui pratinjau
               </Button>
-            </div>
+            </div>}
             <div className="flex flex-wrap gap-2">
-              {(["png", "jpg", "pdf"] as const).map((format) => (
+              {(isSuppliedQrisTemplate(design.template) ? ["png"] as const : ["png", "jpg", "pdf"] as const).map((format) => (
                 <Button
                   key={format}
                   disabled={busy}
@@ -1233,9 +1296,8 @@ export function QrisCustomEditor() {
               Anda dari perangkat sendiri.
             </div>
             <p className="text-xs text-slate-500">
-              Untuk cetak hemat biaya, gunakan kertas Art Paper/Ivory lalu
-              laminasi glossy atau doff; akrilik tidak wajib. Cek hasil scan
-              sebelum dipasang.
+              Bingkai/desain QRIS gratis. Periksa hasil scan dengan aplikasi
+              resmi sebelum dipasang atau dibagikan.
             </p>
             <Button variant="outline" onClick={() => setDeleteOpen(true)}>
               Hapus file sementara sekarang
