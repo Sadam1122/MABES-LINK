@@ -66,3 +66,11 @@ export async function parseJson(request: Request) {
     throw new AppError("Body JSON tidak valid.", 400, "INVALID_JSON");
   }
 }
+
+export function assertSameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  const appOrigin = new URL(process.env.APP_URL ?? request.url).origin;
+  if ((origin && origin !== appOrigin) || fetchSite === "cross-site")
+    throw new AppError("Permintaan lintas situs tidak diizinkan.", 403, "CROSS_SITE_REQUEST");
+}

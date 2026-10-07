@@ -34,10 +34,20 @@ const design: QrisDesign = {
   ornament: "STAR",
   inkSaver: false,
   bottomText: "",
+  bottomFont: "MODERN",
+  bottomFontSize: 32,
+  bottomFontWeight: "BOLD",
+  bottomColor: "#09345a",
+  qrZoom: 1,
+  qrPanX: 0,
+  qrPanY: 0,
+  stickers: [],
   sticker: "NONE",
   stickerDataUrl: "",
   stickerSide: "RIGHT",
+  stickerX: 0.9,
   stickerY: 0.5,
+  stickerSize: 58,
 };
 
 describe("QRIS Custom publik", () => {

@@ -20,7 +20,7 @@ async function main() {
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(baseURL, { waitUntil: "domcontentloaded" });
-      await page.getByRole("link", { name: "Buat QRIS Custom Gratis" }).click();
+      await page.getByRole("link", { name: /Buat desain QRIS/i }).first().click();
       await page
         .getByRole("heading", { name: "QRIS Usahamu, Gayamu." })
         .waitFor();
@@ -45,22 +45,16 @@ async function main() {
       await page.getByText("Lanjutkan", { exact: false }).last().click();
       await page
         .getByRole("alert")
-        .getByText(/lengkapi/i)
+        .getByText(/Periksa:/i)
+        .first()
         .waitFor();
-      await page
-        .getByText("Nama kontak *")
-        .locator("input")
-        .fill("Kontak Samaran");
       await page
         .getByText("Nama usaha *")
         .locator("input")
         .fill("Toko Samaran");
-      await page.getByText("Nomor HP *").locator("input").fill("081234567890");
-      await page.getByText("Kategori usaha *").locator("input").fill("Kuliner");
-      await page
-        .getByText("Alamat usaha minimum *")
-        .locator("input")
-        .fill("Area Mangga Besar Jakarta");
+      await page.getByRole("textbox", { name: "Cari toko atau alamat publik" }).fill("Mangga Besar");
+      await page.getByRole("button", { name: "Cari lokasi" }).click();
+      await page.getByText(/Pencarian tempat belum dikonfigurasi/).waitFor();
       await page
         .getByText(/Saya setuju informasi/)
         .locator("..")
@@ -79,29 +73,31 @@ async function main() {
       await page
         .getByRole("button", { name: /Validasi dan lanjutkan/ })
         .click();
-      await page.getByRole("heading", { name: "Pilih template" }).waitFor();
-      await page
-        .getByRole("button", { name: /Mandiri Heritage Indonesia/ })
-        .click();
+      await page.getByRole("heading", { name: "Pilih suasana untuk usaha Anda" }).waitFor();
+      await page.getByRole("button", { name: /Alam Indonesia/ }).click();
       await page.getByRole("button", { name: /Kustomisasi/ }).click();
       await page
-        .getByAltText("Pratinjau hasil desain")
-        .waitFor({ timeout: 30000 });
+        .getByAltText("Pratinjau desain QRIS")
+        .waitFor({ timeout: 30000 })
+        .catch(async (error) => {
+          await page.screenshot({ path: ".artifacts/qris-editor-error-390.png", fullPage: true });
+          throw new Error(`${String(error)}; alerts: ${await page.getByRole("alert").allTextContents()}`);
+        });
       await page.screenshot({
         path: ".artifacts/qris-editor-390.png",
         fullPage: true,
       });
       await page.getByRole("button", { name: /Lihat hasil/ }).click();
       const downloadEvent = page.waitForEvent("download");
-      await page.getByRole("button", { name: "Unduh PDF" }).click();
+      await page.getByRole("button", { name: "Unduh PNG" }).click();
       const download = await downloadEvent;
       const filePath = await download.path();
-      const pdfHeader = filePath
-        ? (await readFile(filePath)).subarray(0, 5).toString()
+      const pngHeader = filePath
+        ? (await readFile(filePath)).subarray(0, 8).toString("hex")
         : "no-path";
-      if (pdfHeader !== "%PDF-")
+      if (pngHeader !== "89504e470d0a1a0a")
         throw new Error(
-          `Unduhan PDF tidak valid: ${download.suggestedFilename()} (${pdfHeader}, ${await download.failure()})`,
+          `Unduhan PNG tidak valid: ${download.suggestedFilename()} (${pngHeader}, ${await download.failure()})`,
         );
       await page
         .getByRole("button", { name: "Hapus file sementara sekarang" })
@@ -113,7 +109,7 @@ async function main() {
       await page.close();
     }
     console.log(
-      `QRIS public visual & PDF: lolos (360, 390, 768, 1440px) pada ${baseURL}`,
+      `QRIS public visual & PNG: lolos (360, 390, 768, 1440px) pada ${baseURL}`,
     );
   } finally {
     await browser.close();

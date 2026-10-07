@@ -36,7 +36,7 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
   const where: Prisma.ProspectWhereInput = {
     AND: [
       mappingProspectScope(actor),
-      { OR: [{ usageVerifications: { some: { status: UsageStatus.VERIFIED } } }, { publicQrisRequestId: { not: null } }] },
+      { OR: [{ usageVerifications: { some: { status: UsageStatus.VERIFIED } } }, { publicQrisRequestId: { not: null } }, { mappingImportedAt: { not: null } }, { mappingDiscovery: { isNot: null } }] },
       input.areaBlock ? { areaBlock: input.areaBlock } : {},
       input.businessSector ? { businessSector: input.businessSector } : {},
       input.actionNeeded
@@ -75,6 +75,9 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
       where,
       include: {
         assignedTo: { select: { id: true, name: true } },
+        mappingDiscovery: { select: { segments: true, opportunityTags: true, riskReviewRequired: true,
+          foodRule: true, gofoodRating: true, gofoodReviews: true, gofoodCheckedAt: true,
+          grabfoodRating: true, grabfoodReviews: true, grabfoodCheckedAt: true } },
         visits: { orderBy: { visitedAt: "desc" }, take: 3 },
         followUps: {
           where: { status: FollowUpStatus.PLANNED },
@@ -101,7 +104,7 @@ export async function listMappingProspects(actor: Actor, input: MappingInput) {
       where: {
         AND: [
           mappingProspectScope(actor),
-          { OR: [{ usageVerifications: { some: { status: UsageStatus.VERIFIED } } }, { publicQrisRequestId: { not: null } }] },
+          { OR: [{ usageVerifications: { some: { status: UsageStatus.VERIFIED } } }, { publicQrisRequestId: { not: null } }, { mappingImportedAt: { not: null } }, { mappingDiscovery: { isNot: null } }] },
         ],
       },
       select: { areaBlock: true, businessSector: true },

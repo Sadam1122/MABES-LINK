@@ -86,7 +86,7 @@ export const mappingLocationPatchSchema = z
     longitude: z.number().min(-180).max(180).nullable(),
     locationLabel: optionalTrimmed(120),
     locationSource: z
-      .enum(["MAP_PIN", "MANUAL_COORDINATES", "DEVICE_GEOLOCATION"])
+      .enum(["MAP_PIN", "MANUAL_COORDINATES", "DEVICE_GEOLOCATION", "WORKBOOK_UNVERIFIED"])
       .nullable(),
     mappingMarkerIcon: z.enum(mappingMarkerIcons).optional(),
   })
@@ -108,23 +108,23 @@ export const mappingLocationPatchSchema = z
 export const mappingLocationCreateSchema = z.object({
   businessAlias: z.string().trim().min(2).max(120),
   contactPic: optionalTrimmed(100).transform((value) => value || null),
-  need: z.string().trim().min(3).max(500),
+  need: z.string().trim().max(500).default("Belum dikonfirmasi"),
   assignedToId: z.string().min(1),
   areaBlock: optionalTrimmed(100).transform((value) => value || null),
   businessSector: optionalTrimmed(100).transform((value) => value || null),
   addressHint: optionalTrimmed(220).transform((value) => value || null),
-  productNeeds: z.array(z.string().trim().min(2).max(80)).min(1).max(12),
+  productNeeds: z.array(z.string().trim().min(2).max(80)).max(12).default([]),
   locationLabel: optionalTrimmed(120).transform((value) => value || null),
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
+  latitude: z.number().min(-90).max(90).nullable(),
+  longitude: z.number().min(-180).max(180).nullable(),
   locationSource: z.enum([
     "MAP_PIN",
     "MANUAL_COORDINATES",
     "DEVICE_GEOLOCATION",
-  ]),
+  ]).nullable(),
   mappingMarkerIcon: z.enum(mappingMarkerIcons),
-  usageEvidenceReference: z.string().trim().min(3).max(150),
-  usedAt: z.coerce.date(),
+}).refine((value) => (value.latitude === null) === (value.longitude === null), {
+  path: ["longitude"], message: "Latitude dan longitude harus diisi bersama atau sama-sama kosong.",
 });
 
 export const visitCreateSchema = z
@@ -269,6 +269,7 @@ export const appointmentCreateSchema = z
       "MANUAL_COORDINATES",
       "DEVICE_GEOLOCATION",
     ]),
+    mappingMarkerIcon: z.enum(mappingMarkerIcons).default("STORE"),
   })
   .superRefine((value, ctx) => {
     if (

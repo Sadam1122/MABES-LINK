@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { LoginForm } from "@/components/login-form";
 import { BrandLogo } from "@/components/brand-logo";
 import { QrisPromo } from "@/components/qris-promo";
@@ -12,7 +14,7 @@ export default async function LoginPage() {
       <section className="relative hidden overflow-hidden bg-brand-deep p-12 text-white lg:flex lg:flex-col lg:justify-between">
         <div className="absolute -right-24 -top-24 size-96 rounded-full bg-blue-600/20 blur-3xl" />
         <div className="relative">
-          <BrandLogo className="mb-16 max-w-[300px]" sizes="300px" />
+          <Link href="/" aria-label="MABES LINK, kembali ke beranda" className="inline-block"><BrandLogo className="mb-16 max-w-[300px]" sizes="300px" /></Link>
           <h1 className="max-w-xl text-5xl font-black leading-[1.08] tracking-tight">
             Satu alur kerja.
             <br />
@@ -29,8 +31,9 @@ export default async function LoginPage() {
       </section>
       <section className="flex items-center justify-center p-5 sm:p-10">
         <div className="w-full max-w-md">
+          <Link href="/" className="mb-6 inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-50"><ArrowLeft size={16} /> Kembali ke beranda</Link>
           <div className="mb-8 lg:hidden">
-            <BrandLogo className="max-w-[250px]" sizes="250px" />
+            <Link href="/" aria-label="MABES LINK, kembali ke beranda"><BrandLogo className="max-w-[250px]" sizes="250px" onLight /></Link>
           </div>
           <Badge tone="blue">Akses internal</Badge>
           <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950">

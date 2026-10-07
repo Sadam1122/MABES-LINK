@@ -44,6 +44,7 @@ export async function POST(request: Request) {
     const result = await createQrisSession(
       Buffer.from(await file.arrayBuffer()),
       file.type,
+      intake.contactConsent ? intake.requestId : undefined,
     );
     let contactSaved = false;
     let contactError = false;

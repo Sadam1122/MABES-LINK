@@ -178,7 +178,7 @@ export function Dialog({
               <X size={20} />
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-pt-28 scroll-pb-20 px-5 py-5 sm:px-6">
             {children}
           </div>
           {footer ? (

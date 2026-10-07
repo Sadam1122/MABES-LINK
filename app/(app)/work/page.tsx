@@ -121,6 +121,7 @@ export default async function WorkPage({
       locationLabel: true,
       latitude: true,
       longitude: true,
+      mappingMarkerIcon: true,
     },
     orderBy: { locationUpdatedAt: "desc" },
     take: 100,
@@ -134,6 +135,7 @@ export default async function WorkPage({
             detail: location.businessAlias,
             latitude: Number(location.latitude),
             longitude: Number(location.longitude),
+            mappingMarkerIcon: location.mappingMarkerIcon,
           },
         ]
       : [],

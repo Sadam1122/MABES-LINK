@@ -18,6 +18,7 @@ import {
   MANGGA_BESAR_BOUNDARY,
   MANGGA_BESAR_CENTER,
 } from "@/lib/mangga-besar-boundary";
+import { mappingMarkerGlyphs, type MappingMarkerIconValue } from "@/lib/mapping-icons";
 
 export type AppointmentMapPoint = {
   id: string;
@@ -30,14 +31,15 @@ export type AppointmentMapPoint = {
   appointmentAt: string;
   picNames: string[];
   photoId: string | null;
+  markerIcon: MappingMarkerIconValue;
 };
 
-const markerStyle: Record<string, { color: string; symbol: string }> = {
-  CONFIRMED: { color: "#2563eb", symbol: "📅" },
-  PENDING_CONFIRMATION: { color: "#d97706", symbol: "?" },
-  NEEDS_SCHEDULING: { color: "#7c3aed", symbol: "+" },
-  COMPLETED: { color: "#059669", symbol: "✓" },
-  CANCELLED: { color: "#64748b", symbol: "×" },
+const markerStyle: Record<string, { color: string }> = {
+  CONFIRMED: { color: "#2563eb" },
+  PENDING_CONFIRMATION: { color: "#d97706" },
+  NEEDS_SCHEDULING: { color: "#7c3aed" },
+  COMPLETED: { color: "#059669" },
+  CANCELLED: { color: "#64748b" },
 };
 
 function FitResults({ points }: { points: AppointmentMapPoint[] }) {
@@ -101,7 +103,7 @@ export default function AppointmentSpreadMap({
         const appearance = markerStyle[item.appointmentStatus] ?? markerStyle.CONFIRMED;
         const icon = L.divIcon({
           className: "appointment-marker-shell",
-          html: `<span aria-hidden="true" style="display:grid;place-items:center;width:${markerSize}px;height:${markerSize}px;border-radius:14px 14px 14px 4px;background:${appearance.color};color:white;border:3px solid white;box-shadow:0 8px 22px rgba(15,23,42,.28);font-size:${Math.max(14, markerSize * 0.42)}px;font-weight:900">${appearance.symbol}</span>`,
+          html: `<span aria-hidden="true" style="display:grid;place-items:center;width:${markerSize}px;height:${markerSize}px;border-radius:14px 14px 14px 4px;background:${appearance.color};color:white;border:3px solid white;box-shadow:0 8px 22px rgba(15,23,42,.28)"><svg viewBox="0 0 24 24" width="${Math.round(markerSize * .53)}" height="${Math.round(markerSize * .53)}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${mappingMarkerGlyphs[item.markerIcon]}</svg></span>`,
           iconSize: [markerSize, markerSize],
           iconAnchor: [markerSize / 2, markerSize],
           popupAnchor: [0, -markerSize],

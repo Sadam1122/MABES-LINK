@@ -63,6 +63,19 @@ enum UsageStatus {
   REJECTED
 }
 
+enum FoodScreenRule {
+  EITHER
+  BOTH
+}
+
+enum MappingOfferResponse {
+  NOT_ASKED
+  INTERESTED
+  FOLLOW_UP
+  NOT_INTERESTED
+  NOT_RELEVANT
+}
+
 enum MappingMarkerIcon {
   STORE
   FOOD
@@ -70,6 +83,26 @@ enum MappingMarkerIcon {
   OFFICE
   HEALTH
   SERVICE
+  TOWER
+  CAFE
+  BAKERY
+  HOTEL
+  SCHOOL
+  WAREHOUSE
+  FACTORY
+  BANK
+  PHARMACY
+  SALON
+  GYM
+  AUTO
+  ELECTRONICS
+  FASHION
+  FLORIST
+  HOUSE
+  MALL
+  LOGISTICS
+  WORSHIP
+  PARK
 }
 
 enum VisitOutcome {
@@ -177,6 +210,7 @@ model Branch {
   notifications   Notification[]
   outboxJobs      OutboxJob[]
   serviceCases    ServiceCase[]
+  homeBanners     HomeBanner[]
 
   @@index([code])
 }
@@ -215,8 +249,33 @@ model User {
   serviceCaseParticipants   ServiceCaseParticipant[]
   acceptedServiceCases      ServiceCase[]            @relation("ServiceCaseAcceptor")
   locationPhotos            LocationPhoto[]          @relation("LocationPhotoCreator")
+  mappingOpportunities      MappingOpportunity[]     @relation("MappingOpportunityAssignee")
+  homeBanners               HomeBanner[]             @relation("HomeBannerCreator")
 
   @@index([branchId, role, active])
+}
+
+model HomeBanner {
+  id          String   @id @default(cuid())
+  title       String   @db.VarChar(120)
+  description String?  @db.VarChar(240)
+  storageKey  String   @unique @db.VarChar(180)
+  mimeType    String   @db.VarChar(40)
+  byteSize    Int
+  width       Int
+  height      Int
+  checksum    String   @db.VarChar(64)
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  branchId    String
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  createdById String
+  createdBy   User     @relation("HomeBannerCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([branchId, active, sortOrder, createdAt])
+  @@index([createdById, createdAt])
 }
 
 model Session {
@@ -281,6 +340,7 @@ model Prospect {
   productNeeds           String[]            @default([])
   locationLabel          String?             @db.VarChar(120)
   locationSource         String?             @db.VarChar(32)
+  mappingImportedAt      DateTime?           @db.Timestamptz(3)
   locationUpdatedAt      DateTime?           @db.Timestamptz(3)
   mappingMarkerIcon      MappingMarkerIcon   @default(STORE)
   publicQrisRequestId    String?             @unique @db.VarChar(80)
@@ -290,6 +350,8 @@ model Prospect {
   publicBankRelationship String?             @db.VarChar(30)
   publicContactWindow    String?             @db.VarChar(100)
   publicContactConsentAt DateTime?           @db.Timestamptz(3)
+  publicQrisTemplate     String?             @db.VarChar(40)
+  publicQrisDesignedAt   DateTime?           @db.Timestamptz(3)
   isTest                 Boolean             @default(false)
   testNamespace          String?             @db.VarChar(80)
   opportunityStage       OpportunityStage    @default(NEW)
@@ -309,6 +371,8 @@ model Prospect {
   visits                 Visit[]
   serviceCases           ServiceCase[]
   locationPhotos         LocationPhoto[]
+  mappingDiscovery       MappingDiscovery?
+  mappingOpportunities   MappingOpportunity[]
 
   @@index([branchId, isTest, opportunityStage, updatedAt])
   @@index([assignedToId, opportunityStage])
@@ -316,6 +380,7 @@ model Prospect {
   @@index([branchId, areaBlock, businessSector])
   @@index([latitude, longitude])
   @@index([branchId, publicContactConsentAt])
+  @@index([branchId, mappingImportedAt])
 }
 
 model QrisDesignSession {
@@ -326,6 +391,8 @@ model QrisDesignSession {
   width      Int
   height     Int
   qrDigest   String   @db.VarChar(64)
+  publicRequestId String? @db.VarChar(80)
+  selectedTemplate String? @db.VarChar(40)
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
   expiresAt  DateTime @db.Timestamptz(3)
 
@@ -357,9 +424,67 @@ model FollowUp {
   updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
   notifications Notification[]
   outboxJobs    OutboxJob[]
+  mappingOpportunity MappingOpportunity?
 
   @@index([assignedToId, status, dueAt])
   @@index([prospectId, createdAt])
+}
+
+model MappingDiscovery {
+  id                 String         @id @default(cuid())
+  prospectId         String         @unique
+  prospect           Prospect       @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  segments           String[]       @default([])
+  opportunityTags    String[]       @default([])
+  usedProductsKnown  Boolean        @default(false)
+  usedProducts       String[]       @default([])
+  usedProductsOther  String?        @db.VarChar(120)
+  sourceType         String?        @db.VarChar(40)
+  sourceNeedHint     String?        @db.VarChar(500)
+  sourceUrl          String?        @db.VarChar(300)
+  sourceCheckedAt    DateTime?      @db.Timestamptz(3)
+  riskReviewRequired Boolean        @default(false)
+  foodRule           FoodScreenRule @default(EITHER)
+  gofoodRating       Decimal?       @db.Decimal(2, 1)
+  gofoodReviews      Int?
+  gofoodUrl          String?        @db.VarChar(300)
+  gofoodCheckedAt    DateTime?      @db.Timestamptz(3)
+  grabfoodRating     Decimal?       @db.Decimal(2, 1)
+  grabfoodReviews    Int?
+  grabfoodUrl        String?        @db.VarChar(300)
+  grabfoodCheckedAt  DateTime?      @db.Timestamptz(3)
+  version            Int            @default(1)
+  createdAt          DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @db.Timestamptz(3)
+
+  @@index([riskReviewRequired, updatedAt])
+}
+
+model MappingOpportunity {
+  id                 String               @id @default(cuid())
+  prospectId         String
+  prospect           Prospect             @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  productCode        String               @db.VarChar(80)
+  needSummary        String               @db.VarChar(300)
+  discoveredAt       DateTime?            @db.Timestamptz(3)
+  needConfirmedAt    DateTime?            @db.Timestamptz(3)
+  benefitExplainedAt DateTime?            @db.Timestamptz(3)
+  response           MappingOfferResponse @default(NOT_ASKED)
+  followUpConsent    Boolean?
+  nextAction         String?              @db.VarChar(300)
+  dueAt              DateTime?            @db.Timestamptz(3)
+  evidenceNote       String?              @db.VarChar(500)
+  assignedToId       String
+  assignedTo         User                 @relation("MappingOpportunityAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  followUpId         String?              @unique
+  followUp           FollowUp?            @relation(fields: [followUpId], references: [id], onDelete: SetNull)
+  version            Int                  @default(1)
+  createdAt          DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @db.Timestamptz(3)
+
+  @@unique([prospectId, productCode])
+  @@index([assignedToId, response, dueAt])
+  @@index([prospectId, updatedAt])
 }
 
 model HandoverBatch {

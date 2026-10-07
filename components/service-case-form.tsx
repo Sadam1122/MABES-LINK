@@ -16,9 +16,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
-import { clientApi } from "@/lib/client-api";
+import { MarkerIconPicker } from "@/components/marker-icon-picker";
+import { ApiRequestError, clientApi } from "@/lib/client-api";
+import { useDebouncedValue } from "@/lib/client/use-debounced-value";
 import { jakartaLocalToIso } from "@/lib/format";
 import { geolocationErrorMessage } from "@/lib/geo";
+import type { MappingMarkerIconValue } from "@/lib/mapping-icons";
 import {
   acquisitionCatalog,
   getAcquisitionCategory,
@@ -50,6 +53,7 @@ type SavedLocation = {
   detail: string;
   latitude: number;
   longitude: number;
+  mappingMarkerIcon: MappingMarkerIconValue;
 };
 type Point = { latitude: number; longitude: number };
 
@@ -72,9 +76,12 @@ export function ServiceCaseForm({
   const [categoryId, setCategoryId] = useState("");
   const [productId, setProductId] = useState("");
   const [productSearch, setProductSearch] = useState("");
+  const debouncedProductSearch = useDebouncedValue(productSearch, 220);
   const [storeName, setStoreName] = useState("");
   const [locationLabel, setLocationLabel] = useState("");
   const [locationSearch, setLocationSearch] = useState("");
+  const debouncedLocationSearch = useDebouncedValue(locationSearch, 260);
+  const [markerIcon, setMarkerIcon] = useState<MappingMarkerIconValue>("STORE");
   const [latitudeInput, setLatitudeInput] = useState("");
   const [longitudeInput, setLongitudeInput] = useState("");
   const [point, setPoint] = useState<Point | null>(null);
@@ -92,8 +99,8 @@ export function ServiceCaseForm({
     ? officers.filter((officer) => officer.branchId === selectedBranchId)
     : officers;
   const locationMatches = useMemo(() => {
-    const term = locationSearch.trim().toLocaleLowerCase("id-ID");
-    if (term.length < 2) return [];
+    const term = debouncedLocationSearch.trim().toLocaleLowerCase("id-ID");
+    if (locationSearch.trim().length < 2 || term.length < 2) return [];
     return savedLocations
       .filter((item) =>
         `${item.label} ${item.detail}`
@@ -101,12 +108,12 @@ export function ServiceCaseForm({
           .includes(term),
       )
       .slice(0, 6);
-  }, [locationSearch, savedLocations]);
+  }, [debouncedLocationSearch, locationSearch, savedLocations]);
   const selectedCategory = getAcquisitionCategory(categoryId);
   const selectedProduct = getAcquisitionProduct(categoryId, productId);
   const productMatches = useMemo(() => {
-    const term = productSearch.trim().toLocaleLowerCase("id-ID");
-    if (term.length < 2) return [];
+    const term = debouncedProductSearch.trim().toLocaleLowerCase("id-ID");
+    if (productSearch.trim().length < 2 || term.length < 2) return [];
     return acquisitionCatalog
       .flatMap((category) =>
         category.products
@@ -118,7 +125,7 @@ export function ServiceCaseForm({
           .map((product) => ({ category, product })),
       )
       .slice(0, 10);
-  }, [productSearch]);
+  }, [debouncedProductSearch, productSearch]);
 
   useEffect(
     () => () => {
@@ -143,6 +150,8 @@ export function ServiceCaseForm({
     const latitude = Number(latitudeInput);
     const longitude = Number(longitudeInput);
     if (
+      latitudeInput.trim() === "" ||
+      longitudeInput.trim() === "" ||
       !Number.isFinite(latitude) ||
       !Number.isFinite(longitude) ||
       latitude < -90 ||
@@ -260,6 +269,7 @@ export function ServiceCaseForm({
             latitude: point.latitude,
             longitude: point.longitude,
             locationSource,
+            mappingMarkerIcon: markerIcon,
           }),
         },
       );
@@ -291,6 +301,10 @@ export function ServiceCaseForm({
         reason instanceof Error ? reason.message : "Janji gagal disimpan.";
       setError(message);
       toast(message, "error");
+      if (reason instanceof ApiRequestError && reason.field) {
+        const field = reason.field;
+        window.setTimeout(() => document.querySelector<HTMLElement>(`#service-case-form [name="${field}"], #service-case-form [data-field="${field}"]`)?.focus(), 0);
+      }
     } finally {
       setBusy(false);
     }
@@ -305,6 +319,7 @@ export function ServiceCaseForm({
     setStoreName("");
     setLocationLabel("");
     setLocationSearch("");
+    setMarkerIcon("STORE");
     setLatitudeInput("");
     setLongitudeInput("");
     setPoint(null);
@@ -366,17 +381,20 @@ export function ServiceCaseForm({
               </p>
             </div>
             <div className="relative">
+              <label htmlFor="acquisition-product-search" className="mb-1 block text-xs font-bold text-slate-700">Cari produk dalam katalog</label>
               <Search
-                className="pointer-events-none absolute left-3 top-3.5 text-slate-400"
+                className="pointer-events-none absolute left-3 top-[34px] text-slate-400"
                 size={17}
               />
               <input
+                id="acquisition-product-search"
                 className="field pl-10"
                 value={productSearch}
                 onChange={(event) => setProductSearch(event.target.value)}
                 placeholder="Cari QRIS, Kopra, KPR, Tabungan…"
                 aria-label="Cari produk akuisisi"
               />
+              {productSearch.trim().length >= 2 && !productMatches.length && <p className="mt-1 text-xs text-slate-500">Tidak ada produk yang cocok. Coba kata lain atau pilih kategori di bawah.</p>}
               {productMatches.length ? (
                 <div className="absolute z-[1200] mt-1 max-h-72 w-full overflow-y-auto rounded-xl border bg-white shadow-xl">
                   {productMatches.map(({ category, product }) => (
@@ -404,6 +422,8 @@ export function ServiceCaseForm({
               <label className="label">
                 Kategori
                 <select
+                  name="acquisitionCategory"
+                  aria-label="Kategori akuisisi"
                   className="field mt-1"
                   value={categoryId}
                   onChange={(event) => {
@@ -423,6 +443,8 @@ export function ServiceCaseForm({
               <label className="label">
                 Produk / layanan
                 <select
+                  name="acquisitionProduct"
+                  aria-label="Produk akuisisi"
                   className="field mt-1"
                   value={productId}
                   onChange={(event) => setProductId(event.target.value)}
@@ -637,16 +659,20 @@ export function ServiceCaseForm({
             </div>
 
             <div className="relative">
+              <label htmlFor="appointment-location-search" className="mb-1 block text-xs font-bold text-slate-700">Cari titik yang sudah tersimpan</label>
               <Search
-                className="pointer-events-none absolute left-3 top-3.5 text-slate-400"
+                className="pointer-events-none absolute left-3 top-[34px] text-slate-400"
                 size={17}
               />
               <input
+                id="appointment-location-search"
                 className="field pl-10"
                 value={locationSearch}
                 onChange={(event) => setLocationSearch(event.target.value)}
-                placeholder="Cari lokasi tersimpan berdasarkan nama atau label"
+                placeholder="Nama toko, label lokasi, atau area…"
+                aria-label="Cari lokasi janji tersimpan"
               />
+              {locationSearch.trim().length >= 2 && !locationMatches.length && <p className="mt-1 text-xs text-slate-500">Titik tersimpan tidak ditemukan. Pilih pin atau isi koordinat manual.</p>}
               {locationMatches.length ? (
                 <div className="absolute z-[1200] mt-1 w-full overflow-hidden rounded-xl border bg-white shadow-xl">
                   {locationMatches.map((location) => (
@@ -663,6 +689,7 @@ export function ServiceCaseForm({
                           "MAP_PIN",
                         );
                         setLocationLabel(location.label);
+                        setMarkerIcon(location.mappingMarkerIcon);
                         setLocationSearch("");
                       }}
                     >
@@ -678,6 +705,7 @@ export function ServiceCaseForm({
 
             <AppointmentLocationMap
               point={point}
+              markerIcon={markerIcon}
               onPick={(latitude, longitude) =>
                 setMapPoint({ latitude, longitude }, "MAP_PIN")
               }
@@ -739,6 +767,8 @@ export function ServiceCaseForm({
               </p>
             ) : null}
           </section>
+
+          <MarkerIconPicker value={markerIcon} onChange={(next) => { setMarkerIcon(next); setDirty(true); }} label="Ikon titik janji di peta" />
 
           <section className="rounded-2xl border p-4">
             <h3 className="flex items-center gap-2 font-black">

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { qrisStickerIds } from "@/lib/qris-stickers";
 
 export const qrisTemplates = [
   {
@@ -34,6 +35,15 @@ export function isSuppliedQrisTemplate(template: string): template is keyof type
   return template in qrisTemplateZones;
 }
 
+export const qrisPlacedStickerSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum([...qrisStickerIds, "UPLOAD"]),
+  dataUrl: z.string().max(440_000).default(""),
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  size: z.number().int().min(28).max(70),
+});
+
 export const qrisDesignSchema = z.object({
   template: z.enum(["BATIK_NUSANTARA", "ALAM_INDONESIA", "SIGNATURE", "HERITAGE", "FUTURE"]),
   size: z.enum(["A5", "A6"]),
@@ -49,10 +59,20 @@ export const qrisDesignSchema = z.object({
   ornament: z.enum(["STAR", "LEAF", "SPARK", "NONE"]),
   inkSaver: z.boolean(),
   bottomText: z.string().trim().max(72).default(""),
-  sticker: z.enum(["NONE", "FLOWER", "STAR", "SPARKLE", "UPLOAD"]).default("NONE"),
+  bottomFont: z.enum(["MODERN", "CLASSIC", "SCRIPT", "RETRO"]).default("MODERN"),
+  bottomFontSize: z.number().int().min(18).max(40).default(32),
+  bottomFontWeight: z.enum(["NORMAL", "BOLD"]).default("BOLD"),
+  bottomColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#09345a"),
+  qrZoom: z.number().min(0.7).max(1.4).default(1),
+  qrPanX: z.number().min(-1).max(1).default(0),
+  qrPanY: z.number().min(-1).max(1).default(0),
+  stickers: z.array(qrisPlacedStickerSchema).max(3).default([]),
+  sticker: z.enum(["NONE", ...qrisStickerIds, "UPLOAD"]).default("NONE"),
   stickerDataUrl: z.string().max(440_000).default(""),
   stickerSide: z.enum(["LEFT", "RIGHT"]).default("RIGHT"),
+  stickerX: z.number().min(0).max(1).default(0.9),
   stickerY: z.number().min(0).max(1).default(0.5),
+  stickerSize: z.number().int().min(32).max(70).default(58),
 });
 
 export type QrisDesign = z.infer<typeof qrisDesignSchema>;
@@ -62,14 +82,11 @@ export const publicQrisContactSchema = z
     sessionId: z.string().min(1).max(80),
     token: z.string().min(20).max(100),
     requestId: z.string().uuid(),
-    contactName: z.string().trim().min(2).max(100),
+    contactName: z.string().trim().max(100),
     businessName: z.string().trim().min(2).max(120),
-    phone: z
-      .string()
-      .trim()
-      .regex(/^\+?[0-9][0-9\s()-]{7,29}$/),
-    businessCategory: z.string().trim().min(2).max(100),
-    address: z.string().trim().min(3).max(220),
+    phone: z.string().trim().max(30),
+    businessCategory: z.string().trim().max(100),
+    address: z.string().trim().max(220),
     latitude: z.number().min(-90).max(90).nullable(),
     longitude: z.number().min(-180).max(180).nullable(),
     locationSource: z.enum(["MAP_PIN", "DEVICE_GEOLOCATION", "MANUAL_ADDRESS"]),
@@ -88,6 +105,10 @@ export const publicQrisContactSchema = z
     needNote: z.string().trim().max(500).nullable(),
   })
   .superRefine((value, ctx) => {
+    if (value.contactConsent && value.contactName.length < 2)
+      ctx.addIssue({ code: "custom", path: ["contactName"], message: "Nama kontak wajib jika ingin dihubungi." });
+    if ((value.contactConsent || value.phone) && !/^\+?[0-9][0-9\s()-]{7,29}$/.test(value.phone))
+      ctx.addIssue({ code: "custom", path: ["phone"], message: value.contactConsent ? "Nomor HP valid wajib jika ingin dihubungi." : "Nomor HP belum valid." });
     if ((value.latitude == null) !== (value.longitude == null))
       ctx.addIssue({
         code: "custom",

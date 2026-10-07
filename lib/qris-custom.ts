@@ -198,7 +198,7 @@ export async function decodeQris(input: Buffer) {
   return image?.data || null;
 }
 
-export async function createQrisSession(buffer: Buffer, mimeType: string) {
+export async function createQrisSession(buffer: Buffer, mimeType: string, publicRequestId?: string) {
   const normalized = await normalizeAndDecodeQris(buffer, mimeType);
   const token = randomBytes(32).toString("base64url");
   const key = `${randomBytes(16).toString("hex")}.png`;
@@ -214,6 +214,7 @@ export async function createQrisSession(buffer: Buffer, mimeType: string) {
         width: normalized.width,
         height: normalized.height,
         qrDigest: normalized.qrDigest,
+        publicRequestId,
         expiresAt: new Date(Date.now() + expiryHours * 60 * 60_000),
       },
     });

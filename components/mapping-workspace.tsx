@@ -4,14 +4,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import {
-  Building2,
-  HeartPulse,
-  ShoppingBasket,
-  Store,
-  Utensils,
-  Wrench,
-} from "lucide-react";
+import { Building2, Maximize2, Minimize2, ListFilter } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -22,10 +15,14 @@ import {
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useFeedback } from "@/components/ui/feedback";
+import { MarkerGlyph, MarkerIconPicker } from "@/components/marker-icon-picker";
+import { MappingDiscoveryPanel } from "@/components/mapping-discovery-panel";
+import { useDebouncedValue } from "@/lib/client/use-debounced-value";
 import { clientApi } from "@/lib/client-api";
 import {
   formatStraightLineDistance,
   geolocationErrorMessage,
+  googleMapsAddressSearchUrl,
   googleMapsLocationUrl,
   googleMapsNavigationUrl,
   haversineMeters,
@@ -34,15 +31,12 @@ import {
   isWithinManggaBesarBoundary,
   MANGGA_BESAR_BOUNDARY_SOURCE,
 } from "@/lib/mangga-besar-boundary";
-import {
-  mappingMarkerIconOptions,
-  type MappingMarkerIconValue,
-} from "@/lib/mapping-icons";
+import { type MappingMarkerIconValue } from "@/lib/mapping-icons";
 
 const LeafletMap = dynamic(() => import("@/components/mapping-map"), {
   ssr: false,
   loading: () => (
-    <div className="grid h-[430px] place-items-center rounded-2xl bg-slate-100 text-sm text-slate-500">
+    <div className="mabes-mapping-canvas grid place-items-center rounded-2xl bg-slate-100 text-sm text-slate-500">
       Memuat peta… Daftar lokasi tetap tersedia.
     </div>
   ),
@@ -53,6 +47,7 @@ type Prospect = {
   internalCode: string;
   businessAlias: string;
   publicQrisRequestId?: string | null;
+  mappingImportedAt?: string | null;
   contactPic: string;
   areaBlock: string | null;
   businessSector: string | null;
@@ -66,6 +61,9 @@ type Prospect = {
   mappingMarkerIcon: MappingMarkerIconValue;
   version: number;
   opportunityStage: string;
+  mappingDiscovery: { segments: string[]; opportunityTags: string[]; riskReviewRequired: boolean;
+    foodRule: "EITHER" | "BOTH"; gofoodRating: number | null; gofoodReviews: number | null; gofoodCheckedAt: string | null;
+    grabfoodRating: number | null; grabfoodReviews: number | null; grabfoodCheckedAt: string | null } | null;
   assignedTo: { id: string; name: string };
   visits: { visitedAt: string; outcome: string; notes: string }[];
   followUps: { dueAt: string }[];
@@ -78,23 +76,16 @@ type Prospect = {
 };
 type Position = { latitude: number; longitude: number; accuracy: number };
 
-const markerIconComponents = {
-  STORE: Store,
-  FOOD: Utensils,
-  MARKET: ShoppingBasket,
-  OFFICE: Building2,
-  HEALTH: HeartPulse,
-  SERVICE: Wrench,
-} satisfies Record<MappingMarkerIconValue, typeof Store>;
-
 export function MappingWorkspace({
   prospects,
   canEdit,
+  totalLocations,
   roleLabel,
   scopeLabel,
 }: {
   prospects: Prospect[];
   canEdit: boolean;
+  totalLocations: number;
   roleLabel: string;
   scopeLabel: string;
 }) {
@@ -119,14 +110,31 @@ export function MappingWorkspace({
   const [boundaryFilter, setBoundaryFilter] = useState<
     "all" | "inside" | "outside"
   >("all");
+  const [pinFilter, setPinFilter] = useState<"all" | "missing" | "saved">("all");
+  const [placeQuery, setPlaceQuery] = useState(prospects[0]?.addressHint ?? "");
+  const [placeResults, setPlaceResults] = useState<{ label: string; latitude: number; longitude: number }[]>([]);
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeMessage, setPlaceMessage] = useState("");
   const [picFilter, setPicFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 280);
   const [stageFilter, setStageFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [segmentFilter, setSegmentFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState("all");
+  const [foodFilter, setFoodFilter] = useState("all");
+  const [riskFilter, setRiskFilter] = useState(false);
   const [scheduleFilter, setScheduleFilter] = useState("all");
   const [actionNeededOnly, setActionNeededOnly] = useState(false);
   const [showBoundary, setShowBoundary] = useState(true);
-  const [focusRequest, setFocusRequest] = useState(1);
+  const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
+  const [heatScope, setHeatScope] = useState<"all" | "verified" | "action">("all");
+  const [heatRadius, setHeatRadius] = useState(56);
+  const [heatOpacity, setHeatOpacity] = useState(75);
+  const [showHeatPins, setShowHeatPins] = useState(false);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [bankRequest, setBankRequest] = useState(0);
+  const [mapExpanded, setMapExpanded] = useState(false);
   const [fitRequest, setFitRequest] = useState(0);
   const [markerPalette, setMarkerPalette] = useState<
     "status" | "blue" | "green" | "purple"
@@ -208,7 +216,7 @@ export function MappingWorkspace({
   const filteredProspects = useMemo(
     () =>
       prospects.filter((item) => {
-        const normalizedSearch = search.trim().toLocaleLowerCase("id");
+    const normalizedSearch = debouncedSearch.trim().toLocaleLowerCase("id");
         if (
           normalizedSearch &&
           ![
@@ -216,6 +224,10 @@ export function MappingWorkspace({
             item.businessAlias,
             item.contactPic,
             item.locationLabel,
+            item.addressHint,
+            item.areaBlock,
+            item.businessSector,
+            ...item.productNeeds,
             item.assignedTo.name,
           ].some((value) =>
             value?.toLocaleLowerCase("id").includes(normalizedSearch),
@@ -228,6 +240,22 @@ export function MappingWorkspace({
           return false;
         if (categoryFilter !== "all" && item.businessSector !== categoryFilter)
           return false;
+        if (segmentFilter !== "all" && !item.mappingDiscovery?.segments.includes(segmentFilter)) return false;
+        if (tagFilter !== "all" && !item.mappingDiscovery?.opportunityTags.includes(tagFilter)) return false;
+        if (foodFilter !== "all") {
+          const profile = item.mappingDiscovery;
+          const platforms = profile ? [
+            { rating: profile.gofoodRating, reviews: profile.gofoodReviews, checkedAt: profile.gofoodCheckedAt },
+            { rating: profile.grabfoodRating, reviews: profile.grabfoodReviews, checkedAt: profile.grabfoodCheckedAt },
+          ] : [];
+          const passes = platforms.map((entry) => entry.rating != null && entry.reviews != null && entry.checkedAt != null &&
+            new Date(entry.checkedAt).getTime() <= openedAt && openedAt - new Date(entry.checkedAt).getTime() <= 30 * 86_400_000 &&
+            entry.rating >= 4.5 && entry.reviews >= 500);
+          const candidate = profile?.foodRule === "BOTH" ? passes.length === 2 && passes.every(Boolean) : passes.some(Boolean);
+          if (foodFilter === "candidate" && !candidate) return false;
+          if (foodFilter === "not-candidate" && candidate) return false;
+        }
+        if (riskFilter && !item.mappingDiscovery?.riskReviewRequired) return false;
         const dueAt = item.followUps[0]?.dueAt
           ? new Date(item.followUps[0].dueAt)
           : null;
@@ -251,6 +279,9 @@ export function MappingWorkspace({
           )
             return false;
         }
+        const hasPin = item.latitude != null && item.longitude != null;
+        if (pinFilter === "missing" && hasPin) return false;
+        if (pinFilter === "saved" && !hasPin) return false;
         if (boundaryFilter === "all") return true;
         const inside =
           item.latitude != null &&
@@ -264,12 +295,17 @@ export function MappingWorkspace({
     [
       actionNeededOnly,
       boundaryFilter,
+      pinFilter,
       categoryFilter,
+      segmentFilter,
+      tagFilter,
+      foodFilter,
+      riskFilter,
       openedAt,
       picFilter,
       prospects,
       scheduleFilter,
-      search,
+      debouncedSearch,
       stageFilter,
     ],
   );
@@ -321,10 +357,14 @@ export function MappingWorkspace({
         })),
     [filteredProspects, openedAt],
   );
+  const heatPoints = useMemo(() => points.filter((item) => heatScope === "all" || (heatScope === "verified" ? item.usedAt !== null : item.actionNeeded)), [points, heatScope]);
 
   function choose(item: Prospect) {
     setSelected(item);
     setLabel(item.locationLabel ?? "");
+    setPlaceQuery(item.addressHint ?? "");
+    setPlaceResults([]);
+    setPlaceMessage("");
     setSelectedMarkerIcon(item.mappingMarkerIcon);
     setPoint(null);
     setPointSource("MAP_PIN");
@@ -332,6 +372,30 @@ export function MappingWorkspace({
     setManualLng("");
     setPreview(null);
     setError("");
+  }
+
+  async function searchPlace() {
+    const query = placeQuery.trim();
+    if (query.length < 3) {
+      setPlaceMessage("Isi nama tempat atau alamat publik minimal 3 karakter.");
+      return;
+    }
+    setPlaceBusy(true);
+    setPlaceMessage("");
+    setPlaceResults([]);
+    try {
+      const results = await clientApi<{ label: string; latitude: number; longitude: number }[]>(
+        `/api/location-search?q=${encodeURIComponent(query.slice(0, 100))}`,
+      );
+      setPlaceResults(results);
+      setPlaceMessage(results.length
+        ? "Pilih kandidat, periksa posisi di peta, lalu konfirmasi simpan. Hasil pencarian belum tentu tepat."
+        : "Tidak ada kandidat. Periksa alamat di Google Maps lalu pilih pin atau masukkan koordinat manual.");
+    } catch (cause) {
+      setPlaceMessage(cause instanceof Error ? cause.message : "Pencarian tidak tersedia. Pilih pin atau masukkan koordinat manual.");
+    } finally {
+      setPlaceBusy(false);
+    }
   }
 
   async function saveLocation(candidate = point) {
@@ -552,44 +616,51 @@ export function MappingWorkspace({
         Number(item.longitude),
       ),
   ).length;
+  const missingPinCount = prospects.filter((item) => item.latitude == null || item.longitude == null).length;
 
   return (
     <div className="space-y-4">
-      <section className="card grid gap-3 border-blue-200 bg-blue-50/60 p-4 md:grid-cols-2 xl:grid-cols-4 xl:items-end">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[.14em] text-blue-700">
-            Akses aktif · {roleLabel}
-          </p>
-          <p className="mt-1 font-bold text-slate-900">{scopeLabel}</p>
-          <p className="mt-1 text-xs text-slate-600">
-            {insideCount} titik di dalam referensi batas · {prospects.length}{" "}
-            pengguna terverifikasi dapat diakses
-          </p>
+      <section className="card overflow-hidden border-blue-200">
+        <div className="bg-[#092b60] p-5 text-white sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[.18em] text-amber-300">Peta kerja · {roleLabel}</p>
+              <h2 className="mt-2 text-xl font-black tracking-tight sm:text-2xl">Temukan lokasi, lanjutkan pekerjaan</h2>
+              <p className="mt-2 text-sm text-blue-100">{scopeLabel}. Koordinat dari workbook tetap perlu verifikasi lapangan.</p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs font-bold">
+              <span className="rounded-full border border-white/20 bg-white/10 px-3 py-2">{withDistance.length} hasil</span>
+              <span className="rounded-full border border-white/20 bg-white/10 px-3 py-2">{insideCount} dalam batas</span>
+              <span className="rounded-full border border-amber-300/30 bg-amber-300/15 px-3 py-2 text-amber-100">{missingPinCount} tanpa pin</span>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-blue-200">{prospects.length} dari {totalLocations} lokasi termuat · Ekspor Excel mencakup seluruh cakupan Anda (maks. 5.000).</p>
         </div>
-        <label className="text-xs font-bold text-slate-700 xl:col-start-1">
-          Cari nama, toko, atau PIC
-          <input
-            className="field mt-1"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Cari lokasi…"
-          />
-        </label>
-        <label className="text-xs font-bold text-slate-700">
-          Filter PIC
-          <select
-            className="field mt-1 min-w-44"
-            value={picFilter}
-            onChange={(event) => setPicFilter(event.target.value)}
-          >
-            <option value="all">Semua PIC yang terlihat</option>
-            {picOptions.map((pic) => (
-              <option key={pic.id} value={pic.id}>
-                {pic.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4 xl:items-end sm:p-5">
+          <label className="text-xs font-bold text-slate-700 xl:col-span-2">Cari nama, alamat, atau PIC
+            <input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari lokasi atau nama usaha…" />
+          </label>
+          <label className="text-xs font-bold text-slate-700">PIC
+            <select className="field mt-1" value={picFilter} onChange={(event) => setPicFilter(event.target.value)}>
+              <option value="all">Semua PIC</option>
+              {picOptions.map((pic) => <option key={pic.id} value={pic.id}>{pic.name}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-bold text-slate-700">Kategori usaha
+            <select className="field mt-1" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+              <option value="all">Semua kategori</option>
+              {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </label>
+          <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-4">
+            <button type="button" aria-pressed={actionNeededOnly} onClick={() => setActionNeededOnly((value) => !value)} className={`min-h-10 rounded-full border px-4 text-xs font-bold transition ${actionNeededOnly ? "border-amber-400 bg-amber-100 text-amber-950" : "border-slate-200 bg-white text-slate-700 hover:border-blue-400"}`}>Perlu tindakan</button>
+            <button type="button" aria-pressed={pinFilter === "missing"} onClick={() => setPinFilter(pinFilter === "missing" ? "all" : "missing")} className={`min-h-10 rounded-full border px-4 text-xs font-bold transition ${pinFilter === "missing" ? "border-amber-400 bg-amber-100 text-amber-950" : "border-slate-200 bg-white text-slate-700 hover:border-blue-400"}`}>Tanpa pin · {missingPinCount}</button>
+            <button type="button" aria-pressed={pinFilter === "saved"} onClick={() => setPinFilter(pinFilter === "saved" ? "all" : "saved")} className={`min-h-10 rounded-full border px-4 text-xs font-bold transition ${pinFilter === "saved" ? "border-blue-500 bg-blue-50 text-blue-900" : "border-slate-200 bg-white text-slate-700 hover:border-blue-400"}`}>Sudah bertitik</button>
+          </div>
+        </div>
+        <details className="group border-t border-slate-200 bg-[#f8fafd] px-4 py-3 sm:px-5">
+          <summary className="cursor-pointer text-sm font-bold text-blue-900">Filter lanjutan <span className="ml-1 text-slate-500 group-open:hidden">＋</span><span className="ml-1 hidden text-slate-500 group-open:inline">−</span></summary>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4 xl:items-end">
         <label className="text-xs font-bold text-slate-700">
           Status akuisisi
           <select
@@ -607,21 +678,10 @@ export function MappingWorkspace({
             <option value="CLOSED_LOST">Ditutup</option>
           </select>
         </label>
-        <label className="text-xs font-bold text-slate-700">
-          Kategori usaha
-          <select
-            className="field mt-1"
-            value={categoryFilter}
-            onChange={(event) => setCategoryFilter(event.target.value)}
-          >
-            <option value="all">Semua kategori</option>
-            {categoryOptions.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
-        </label>
+        <label className="text-xs font-bold text-slate-700">Segmen 3P+1I<select className="field mt-1" value={segmentFilter} onChange={(event) => setSegmentFilter(event.target.value)}><option value="all">Semua segmen</option><option value="PEMBISNIS">Pembisnis</option><option value="PAYROLL">Payroll</option><option value="PRIORITAS">Prioritas</option><option value="INDIVIDU">Individu</option></select></label>
+        <label className="text-xs font-bold text-slate-700">Peluang / sektor<select className="field mt-1" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">Semua tag</option><option value="LIVIN_FOOD_SCREEN">Livin’ Food (screening)</option><option value="LIVIN_MERCHANT_QRIS">Livin’ Merchant/QRIS</option><option value="KOPRA_WHOLESALE">Kopra/Wholesale</option><option value="HOTEL">Hotel</option><option value="HEALTHCARE">Kesehatan</option><option value="CULINARY">Kuliner</option><option value="OFFICE">Kantor</option><option value="OTHER">Lainnya</option></select></label>
+        <label className="text-xs font-bold text-slate-700">Screening Livin’ Food<select className="field mt-1" value={foodFilter} onChange={(event) => setFoodFilter(event.target.value)}><option value="all">Semua hasil</option><option value="candidate">Kandidat screening</option><option value="not-candidate">Belum kandidat / perlu verifikasi</option></select></label>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={riskFilter} onChange={(event) => setRiskFilter(event.target.checked)} />Perlu review Risk/Compliance</label>
         <label className="text-xs font-bold text-slate-700">
           Jadwal follow-up
           <select
@@ -652,33 +712,46 @@ export function MappingWorkspace({
             <option value="outside">Di luar / belum bertitik</option>
           </select>
         </label>
-        <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-sm font-bold text-slate-700">
-          <input
-            type="checkbox"
-            checked={actionNeededOnly}
-            onChange={(event) => setActionNeededOnly(event.target.checked)}
-          />
-          Perlu tindakan
-        </label>
         <Button
           variant="ghost"
+          className="scroll-mt-28 scroll-mb-28"
           onClick={() => {
             setSearch("");
             setPicFilter("all");
             setStageFilter("all");
             setCategoryFilter("all");
+            setSegmentFilter("all");
+            setTagFilter("all");
+            setFoodFilter("all");
+            setRiskFilter(false);
             setScheduleFilter("all");
             setBoundaryFilter("all");
+            setPinFilter("all");
             setActionNeededOnly(false);
           }}
         >
           Reset filter
         </Button>
+          </div>
+        </details>
       </section>
-      <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
-        <section className="space-y-4">
+      <div className={`grid items-start gap-4 ${mapExpanded ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_290px] 2xl:grid-cols-[minmax(0,1fr)_310px]"}`}>
+        <section className="min-w-0 space-y-4">
           <div className="card overflow-hidden p-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-3 sm:p-4">
+              <div><h2 className="text-base font-bold text-slate-950">Sebaran lokasi</h2><p className="text-xs text-slate-500">{points.length} titik sesuai filter dan izin Anda · maksimal 1.000 lokasi terbaru termuat</p></div>
+              <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => setMapExpanded((value) => !value)} aria-pressed={mapExpanded} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-900 hover:bg-blue-100">
+                {mapExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{mapExpanded ? "Tampilkan daftar" : "Perbesar peta"}
+              </button>
+              <div className="inline-flex rounded-xl border bg-slate-100 p-1" role="group" aria-label="Tampilan peta">
+                <button type="button" aria-pressed={viewMode === "markers"} onClick={() => setViewMode("markers")} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${viewMode === "markers" ? "bg-white text-blue-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>Penanda</button>
+                <button type="button" aria-pressed={viewMode === "heatmap"} onClick={() => setViewMode("heatmap")} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${viewMode === "heatmap" ? "bg-white text-blue-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>Heatmap</button>
+              </div>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2 p-2">
+              <Button variant="outline" onClick={() => setBankRequest((value) => value + 1)}><Building2 size={16} /> Fokus cabang</Button>
               <Button
                 variant="outline"
                 onClick={() => setShowBoundary((value) => !value)}
@@ -698,6 +771,10 @@ export function MappingWorkspace({
               >
                 Fokus hasil filter
               </Button>
+            </div>
+            <details className="mx-2 mb-3 rounded-xl border border-slate-200 bg-slate-50" open={viewMode === "heatmap"}>
+              <summary className="cursor-pointer px-3 py-3 text-xs font-bold text-slate-700">{viewMode === "heatmap" ? "Pengaturan heatmap & penanda" : "Warna, ukuran penanda & legenda"}</summary>
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 p-3">
               <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">
                 Warna marker
                 <select
@@ -719,6 +796,20 @@ export function MappingWorkspace({
                   <option value="purple">Ungu</option>
                 </select>
               </label>
+              {viewMode === "heatmap" && <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">Titik heatmap
+                <select className="bg-transparent" value={heatScope} onChange={(event) => setHeatScope(event.target.value as typeof heatScope)}>
+                  <option value="all">Semua terlihat</option><option value="verified">Penggunaan terverifikasi</option><option value="action">Perlu tindakan</option>
+                </select>
+              </label>}
+              {viewMode === "heatmap" && <>
+                <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">Radius {heatRadius}px
+                  <input type="range" min="28" max="90" step="2" value={heatRadius} onChange={(event) => setHeatRadius(Number(event.target.value))} aria-label="Radius heatmap" />
+                </label>
+                <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">Opasitas {heatOpacity}%
+                  <input type="range" min="30" max="100" step="5" value={heatOpacity} onChange={(event) => setHeatOpacity(Number(event.target.value))} aria-label="Opasitas heatmap" />
+                </label>
+                <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold"><input type="checkbox" checked={showHeatPins} onChange={(event) => setShowHeatPins(event.target.checked)} /> Tampilkan pin</label>
+              </>}
               <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">
                 Skala ikon {markerScale}px
                 <input
@@ -737,15 +828,23 @@ export function MappingWorkspace({
                 Garis biru: referensi administratif, bukan penetapan wilayah
                 kerja.
               </span>
-            </div>
+              </div>
+            </details>
             <LeafletMap
               points={points}
+              viewMode={viewMode}
+              heatPoints={heatPoints}
+              heatRadius={heatRadius}
+              heatOpacity={heatOpacity}
+              showHeatPins={showHeatPins}
               userPosition={userPosition}
               candidate={
                 point ? { latitude: point.lat, longitude: point.lng } : null
               }
               showBoundary={showBoundary}
               focusRequest={focusRequest}
+              bankRequest={bankRequest}
+              expanded={mapExpanded}
               fitRequest={fitRequest}
               markerPalette={markerPalette}
               markerScale={markerScale}
@@ -762,6 +861,7 @@ export function MappingWorkspace({
                 if (item) choose(item);
               }}
             />
+            {viewMode === "heatmap" && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-600"><span className="flex items-center gap-2"><span aria-hidden="true" className="h-2 w-24 rounded-full bg-gradient-to-r from-sky-600 via-amber-400 to-red-600" />{heatPoints.length ? `${heatPoints.length} titik · rendah → padat` : "Tidak ada titik untuk cakupan heatmap ini. Ubah filter titik."}</span><strong>Bukan skor kredit atau potensi dana.</strong></div>}
             <p className="px-2 pb-1 pt-2 text-xs text-slate-500">
               Klik peta untuk memilih titik. Layer peta menerima permintaan tile
               dan koordinat area tampilan; jangan masukkan informasi rahasia
@@ -787,6 +887,32 @@ export function MappingWorkspace({
                   tidak disimpan sebagai riwayat.
                 </p>
               </div>
+              {!saved && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                Alamat dan ikon dari Excel sudah tersimpan. Pin belum dibuat karena koordinat belum tersedia. Cari alamat, periksa kandidat di peta, lalu simpan titik yang benar.
+              </div>}
+              <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-3">
+                <label className="label" htmlFor="mapping-place-query">Cari alamat atau nama tempat publik</label>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input id="mapping-place-query" className="field min-w-0 flex-1" value={placeQuery} onChange={(event) => setPlaceQuery(event.target.value)} placeholder="Contoh: nama usaha, jalan, Jakarta" maxLength={100} />
+                  <Button type="button" variant="outline" disabled={placeBusy} onClick={() => void searchPlace()}>{placeBusy ? "Mencari…" : "Cari kandidat"}</Button>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                  {placeQuery.trim() && <a href={googleMapsAddressSearchUrl(placeQuery)} target="_blank" rel="noreferrer" className="font-bold text-blue-800 underline">Periksa di Google Maps ↗</a>}
+                  <span className="text-slate-600">Pencarian eksternal hanya dijalankan saat Anda menekan tombol atau tautan. Jangan cari data rahasia.</span>
+                </div>
+                {placeMessage && <p role="status" className="mt-2 text-xs text-slate-700">{placeMessage}</p>}
+                {placeResults.length > 0 && <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
+                  {placeResults.map((result, index) => <button key={`${index}-${result.latitude}-${result.longitude}`} type="button" onClick={() => {
+                    setPoint({ lat: result.latitude, lng: result.longitude });
+                    setPointSource("MAP_PIN");
+                    setManualLat(result.latitude.toFixed(7));
+                    setManualLng(result.longitude.toFixed(7));
+                    setPlaceMessage("Kandidat dipilih. Periksa pin ungu pada peta; lokasi belum tersimpan.");
+                  }} className="flex w-full items-start justify-between gap-3 rounded-xl border border-blue-100 bg-white p-3 text-left text-xs hover:border-blue-500">
+                    <span>{result.label}</span><span className="shrink-0 font-semibold text-blue-800">Lihat titik</span>
+                  </button>)}
+                </div>}
+              </div>
               <div className="rounded-2xl border bg-slate-50 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -806,30 +932,7 @@ export function MappingWorkspace({
                     </Button>
                   ) : null}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {mappingMarkerIconOptions.map((option) => {
-                    const Icon = markerIconComponents[option.value];
-                    const active = selectedMarkerIcon === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        title={option.description}
-                        aria-label={`Gunakan ikon ${option.label}`}
-                        aria-pressed={active}
-                        onClick={() => setSelectedMarkerIcon(option.value)}
-                        className={`flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm font-bold transition ${
-                          active
-                            ? "border-blue-700 bg-blue-700 text-white"
-                            : "bg-white text-slate-700 hover:border-blue-300"
-                        }`}
-                      >
-                        <Icon size={17} />
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <div className="mt-3"><MarkerIconPicker value={selectedMarkerIcon} onChange={setSelectedMarkerIcon} label="Pilih ikon penanda" /></div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="label">
@@ -918,6 +1021,8 @@ export function MappingWorkspace({
                         ? "Koordinat manual"
                         : selected.locationSource === "MAP_PIN"
                           ? "Pin peta"
+                          : selected.locationSource === "WORKBOOK_UNVERIFIED"
+                            ? "Koordinat workbook · belum diverifikasi di lapangan"
                           : "Belum tercatat"}
                     {selected.locationUpdatedAt
                       ? ` · dicatat ${new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.locationUpdatedAt))} WIB`
@@ -1018,25 +1123,31 @@ export function MappingWorkspace({
               {error && <p className="text-sm text-red-700">{error}</p>}
             </div>
           )}
+          {selected && <MappingDiscoveryPanel key={selected.id} prospectId={selected.id} defaultPicId={selected.assignedTo.id} />}
         </section>
-        <section className="space-y-3">
-          <div className="flex justify-end">
+        <section aria-label="Daftar lokasi hasil filter" className={`${mapExpanded ? "hidden" : "min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm xl:sticky xl:top-24"}`}>
+          <div className="space-y-3 border-b border-slate-100 p-4">
+            <div className="flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-sm font-black text-slate-900"><ListFilter size={17} /> Daftar lokasi</h2><span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-800">{withDistance.length}</span></div>
             <Button
               variant="outline"
+              size="sm"
+              className="w-full"
               disabled={!userPosition}
               onClick={() => setSortNearest(!sortNearest)}
             >
               {sortNearest ? "Urutan semula" : "Urutkan terdekat"}
             </Button>
           </div>
+          <div className="mapping-location-list space-y-2 overflow-y-auto overscroll-contain p-3" tabIndex={0} aria-label="Gulir hasil lokasi">
           {withDistance.length ? (
             withDistance.map(({ item, distance }) => (
               <button
                 type="button"
                 onClick={() => choose(item)}
                 key={item.id}
-                className={`card w-full p-4 text-left ${
-                  selected?.id === item.id ? "ring-2 ring-blue-700" : ""
+                aria-pressed={selected?.id === item.id}
+                className={`w-full rounded-xl border p-3 text-left transition-colors ${
+                  selected?.id === item.id ? "border-blue-600 bg-blue-50 ring-1 ring-blue-600" : "border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50"
                 }`}
               >
                 <div className="flex justify-between gap-3">
@@ -1044,9 +1155,7 @@ export function MappingWorkspace({
                     <p className="font-mono text-xs text-blue-700">
                       {item.internalCode}
                     </p>
-                    <p className="font-bold">
-                      {item.locationLabel || item.businessAlias}
-                    </p>
+                    <p className="flex items-center gap-2 font-bold"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700"><MarkerGlyph icon={item.mappingMarkerIcon} size={18} /></span>{item.locationLabel || item.businessAlias}</p>
                   </div>
                   {distance != null && (
                     <span className="text-xs font-bold text-emerald-700">
@@ -1059,11 +1168,12 @@ export function MappingWorkspace({
                   {item.businessSector || "Sektor belum diisi"} · PIC{" "}
                   {item.assignedTo.name}
                 </p>
+                {selected?.id === item.id && <>
                 <p className="mt-2 text-xs font-semibold text-slate-700">
-                  {item.usageVerifications[0] ? "Pengguna" : "Kontak permintaan"}: {item.contactPic}
+                  {item.usageVerifications[0] ? "Kontak terverifikasi" : "Kontak belum diverifikasi"}: {item.contactPic}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Produk:{" "}
+                  Catatan produk awal (belum dikonfirmasi):{" "}
                   {item.productNeeds.length
                     ? item.productNeeds.join(", ")
                     : "Belum dirinci"}
@@ -1076,7 +1186,8 @@ export function MappingWorkspace({
                       dateStyle: "medium",
                     }).format(new Date(item.usageVerifications[0].usedAt))}
                   </p>
-                ) : item.publicQrisRequestId ? <p className="mt-1 text-xs font-semibold text-amber-700">Permintaan QRIS Custom · penggunaan belum diverifikasi</p> : null}
+                ) : item.publicQrisRequestId ? <p className="mt-1 text-xs font-semibold text-amber-700">Permintaan QRIS Custom · penggunaan belum diverifikasi</p> : item.mappingImportedAt ? <p className="mt-1 text-xs font-semibold text-blue-700">Lokasi hasil impor · penggunaan belum diverifikasi</p> : <p className="mt-1 text-xs font-semibold text-blue-700">Prospek mapping · kebutuhan belum dikonfirmasi</p>}
+                </>}
                 {item.latitude != null && item.longitude != null && (
                   <p className="mt-1 text-xs font-semibold text-blue-700">
                     {isWithinManggaBesarBoundary(
@@ -1085,7 +1196,11 @@ export function MappingWorkspace({
                     )
                       ? "Di dalam referensi batas"
                       : "Di luar referensi batas"}
+                    {item.locationSource === "WORKBOOK_UNVERIFIED" && <span className="ml-1 text-amber-800">· pin workbook perlu verifikasi</span>}
                   </p>
+                )}
+                {(item.latitude == null || item.longitude == null) && (
+                  <p className="mt-1 text-xs font-semibold text-amber-700">Perlu verifikasi pin · klik kartu untuk cari alamat atau pilih titik</p>
                 )}
                 {item.followUps[0]?.dueAt ? (
                   <p className="mt-2 text-xs font-semibold text-slate-700">
@@ -1111,11 +1226,12 @@ export function MappingWorkspace({
             ))
           ) : (
             <div className="card p-8 text-center text-sm text-slate-500">
-              Belum ada toko/pengguna terverifikasi yang sesuai filter.
+              Belum ada lokasi mapping yang sesuai filter.
             </div>
           )}
+          </div>
           {selected && (
-            <div className="card p-4">
+            <div className="border-t border-slate-100 p-4">
               <p className="font-bold">Tugas terkait</p>
               <Link
                 href={`/work?search=${encodeURIComponent(selected.internalCode)}`}

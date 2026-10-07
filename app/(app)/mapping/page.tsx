@@ -1,6 +1,7 @@
 import { Role } from "@prisma/client";
 
 import { MappingCreateForm } from "@/components/mapping-create-form";
+import { MappingExcelTools } from "@/components/mapping-excel-tools";
 import { MappingWorkspace } from "@/components/mapping-workspace";
 import { PageHeader } from "@/components/page-header";
 import { db } from "@/lib/db";
@@ -16,14 +17,14 @@ const roleLabel: Record<Role, string> = {
 
 function mappingScopeLabel(role: Role) {
   if (role === Role.ADMIN) return "Semua cabang dan seluruh petugas";
-  return "Seluruh mapping terverifikasi pada cabang Anda";
+  return "Lokasi mapping dalam cabang Anda";
 }
 
 export default async function MappingPage() {
   const actor = await requirePageActor();
   const data = await listMappingProspects(actor, {
     page: 1,
-    pageSize: 100,
+    pageSize: 1000,
   });
   const officers = await db.user.findMany({
     where: {
@@ -45,9 +46,17 @@ export default async function MappingPage() {
   });
   const prospects = data.items.map((prospect) => ({
     ...prospect,
+    mappingDiscovery: prospect.mappingDiscovery ? {
+      ...prospect.mappingDiscovery,
+      gofoodRating: prospect.mappingDiscovery.gofoodRating == null ? null : Number(prospect.mappingDiscovery.gofoodRating),
+      grabfoodRating: prospect.mappingDiscovery.grabfoodRating == null ? null : Number(prospect.mappingDiscovery.grabfoodRating),
+      gofoodCheckedAt: prospect.mappingDiscovery.gofoodCheckedAt?.toISOString() ?? null,
+      grabfoodCheckedAt: prospect.mappingDiscovery.grabfoodCheckedAt?.toISOString() ?? null,
+    } : null,
     latitude: prospect.latitude == null ? null : Number(prospect.latitude),
     longitude: prospect.longitude == null ? null : Number(prospect.longitude),
     locationUpdatedAt: prospect.locationUpdatedAt?.toISOString() ?? null,
+    mappingImportedAt: prospect.mappingImportedAt?.toISOString() ?? null,
     visits: prospect.visits.map((visit) => ({
       ...visit,
       visitedAt: visit.visitedAt.toISOString(),
@@ -71,9 +80,9 @@ export default async function MappingPage() {
       <PageHeader
         eyebrow="Lokasi operasional"
         title="Mapping"
-        description="Peta lokasi penggunaan terverifikasi dan permintaan QRIS Custom yang memberi persetujuan tindak lanjut. Status keduanya ditampilkan terpisah."
+        description="Peta prospek, hasil impor, permintaan QRIS Custom, dan lokasi penggunaan terverifikasi. Kebutuhan, penawaran, dan penggunaan dicatat terpisah."
         actions={
-          <MappingCreateForm
+          <div className="flex flex-wrap items-center gap-2"><MappingExcelTools /><MappingCreateForm
             actorId={actor.id}
             officers={officers.map((officer) => ({
               id: officer.id,
@@ -81,12 +90,13 @@ export default async function MappingPage() {
               role: roleLabel[officer.role],
               branchCode: officer.branch?.code ?? "Tanpa cabang",
             }))}
-          />
+          /></div>
         }
       />
       <MappingWorkspace
         prospects={prospects}
         canEdit
+        totalLocations={data.pagination.total}
         roleLabel={roleLabel[actor.role]}
         scopeLabel={mappingScopeLabel(actor.role)}
       />

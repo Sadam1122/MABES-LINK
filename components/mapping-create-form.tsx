@@ -1,27 +1,16 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import {
-  Building2,
-  HeartPulse,
-  LocateFixed,
-  MapPinPlus,
-  ShoppingBasket,
-  Store,
-  Utensils,
-  Wrench,
-} from "lucide-react";
+import { LocateFixed, MapPinPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
+import { MarkerIconPicker } from "@/components/marker-icon-picker";
 import { clientApi } from "@/lib/client-api";
 import { geolocationErrorMessage } from "@/lib/geo";
-import {
-  mappingMarkerIconOptions,
-  type MappingMarkerIconValue,
-} from "@/lib/mapping-icons";
+import { type MappingMarkerIconValue } from "@/lib/mapping-icons";
 import { isWithinManggaBesarBoundary } from "@/lib/mangga-besar-boundary";
 
 const LocationPickerMap = dynamic(
@@ -36,30 +25,12 @@ const LocationPickerMap = dynamic(
   },
 );
 
-const iconComponents = {
-  STORE: Store,
-  FOOD: Utensils,
-  MARKET: ShoppingBasket,
-  OFFICE: Building2,
-  HEALTH: HeartPulse,
-  SERVICE: Wrench,
-} satisfies Record<MappingMarkerIconValue, typeof Store>;
-
 type Officer = {
   id: string;
   name: string;
   role: string;
   branchCode: string;
 };
-
-function jakartaDateValue() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
 
 export function MappingCreateForm({
   officers,
@@ -139,23 +110,11 @@ export function MappingCreateForm({
   };
 
   const submit = async (formData: FormData) => {
-    if (!point) {
-      setError("Pilih titik pada peta atau isi koordinat manual.");
-      return;
-    }
-    const products = String(formData.get("productNeeds") ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!products.length) {
-      setError("Isi sedikitnya satu produk Mandiri yang sudah digunakan.");
-      return;
-    }
-    const inside = isWithinManggaBesarBoundary(point.latitude, point.longitude);
+    const inside = point ? isWithinManggaBesarBoundary(point.latitude, point.longitude) : null;
     if (
       !(await confirm({
         title: "Tambahkan lokasi mapping?",
-        description: `${inside ? "Titik berada di dalam" : "Titik berada di luar"} referensi batas Mangga Besar. Penggunaan produk harus sudah diverifikasi melalui sumber internal yang diizinkan.`,
+        description: `${inside == null ? "Lokasi akan masuk daftar tanpa pin." : inside ? "Titik berada di dalam referensi batas Mangga Besar." : "Titik berada di luar referensi batas Mangga Besar."} Kebutuhan dan penggunaan produk belum dianggap terkonfirmasi.`,
         confirmLabel: "Tambahkan lokasi",
       }))
     )
@@ -169,19 +128,17 @@ export function MappingCreateForm({
         body: JSON.stringify({
           businessAlias: formData.get("businessAlias"),
           contactPic: formData.get("contactPic") || null,
-          need: formData.get("need"),
+          need: "Belum dikonfirmasi",
           assignedToId: formData.get("assignedToId"),
           areaBlock: formData.get("areaBlock") || null,
           businessSector: formData.get("businessSector") || null,
           addressHint: formData.get("addressHint") || null,
-          productNeeds: products,
+          productNeeds: [],
           locationLabel: formData.get("locationLabel") || null,
-          latitude: point.latitude,
-          longitude: point.longitude,
-          locationSource,
+          latitude: point?.latitude ?? null,
+          longitude: point?.longitude ?? null,
+          locationSource: point ? locationSource : null,
           mappingMarkerIcon: markerIcon,
-          usageEvidenceReference: formData.get("usageEvidenceReference"),
-          usedAt: `${formData.get("usedAt")}T00:00:00+07:00`,
         }),
       });
       setDirty(false);
@@ -209,7 +166,7 @@ export function MappingCreateForm({
         open={open}
         onClose={() => setOpen(false)}
         title="Tambah lokasi mapping"
-        description="Catat toko/usaha yang penggunaan produk Mandirinya sudah diverifikasi. Data masuk ke model prospek yang sama."
+        description="Catat lokasi prospek tanpa menganggap kebutuhan atau penggunaan produk sudah terkonfirmasi. Koordinat boleh ditambahkan nanti."
         dirty={dirty}
         busy={busy}
         className="max-w-4xl"
@@ -239,28 +196,6 @@ export function MappingCreateForm({
               <input className="field mt-1" name="contactPic" maxLength={100} />
             </label>
             <label className="label">
-              Produk Mandiri yang digunakan
-              <input
-                className="field mt-1"
-                name="productNeeds"
-                placeholder="QRIS, Livin Merchant"
-                required
-              />
-              <span className="mt-1 block text-xs font-normal text-slate-500">
-                Pisahkan beberapa produk dengan koma.
-              </span>
-            </label>
-            <label className="label">
-              Keterangan penggunaan/kebutuhan
-              <input
-                className="field mt-1"
-                name="need"
-                minLength={3}
-                maxLength={500}
-                required
-              />
-            </label>
-            <label className="label">
               PIC internal
               <select
                 className="field mt-1"
@@ -274,27 +209,6 @@ export function MappingCreateForm({
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="label">
-              Referensi verifikasi internal
-              <input
-                className="field mt-1"
-                name="usageEvidenceReference"
-                minLength={3}
-                maxLength={150}
-                placeholder="Nomor catatan internal yang diizinkan"
-                required
-              />
-            </label>
-            <label className="label">
-              Tanggal penggunaan terverifikasi
-              <input
-                className="field mt-1"
-                type="date"
-                name="usedAt"
-                defaultValue={jakartaDateValue()}
-                required
-              />
             </label>
             <label className="label">
               Kategori usaha (opsional)
@@ -326,46 +240,7 @@ export function MappingCreateForm({
             </label>
           </div>
 
-          <fieldset>
-            <legend className="label">Pilih ikon penanda</legend>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {mappingMarkerIconOptions.map((option) => {
-                const Icon = iconComponents[option.value];
-                const active = markerIcon === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    aria-label={`Gunakan ikon ${option.label}`}
-                    aria-pressed={active}
-                    onClick={() => {
-                      setMarkerIcon(option.value);
-                      setDirty(true);
-                    }}
-                    className={`flex min-h-20 items-center gap-3 rounded-2xl border p-3 text-left transition ${
-                      active
-                        ? "border-blue-700 bg-blue-50 text-blue-900 ring-2 ring-blue-200"
-                        : "bg-white hover:border-blue-300 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span
-                      className={`grid size-10 shrink-0 place-items-center rounded-xl ${active ? "bg-blue-700 text-white" : "bg-slate-100 text-slate-700"}`}
-                    >
-                      <Icon size={21} />
-                    </span>
-                    <span>
-                      <span className="block text-sm font-black">
-                        {option.label}
-                      </span>
-                      <span className="block text-xs text-slate-500">
-                        {option.description}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
+          <MarkerIconPicker value={markerIcon} onChange={(next) => { setMarkerIcon(next); setDirty(true); }} label="Pilih ikon penanda lokasi" />
 
           <div className="space-y-3 rounded-2xl border bg-slate-50 p-3 sm:p-4">
             <div className="flex flex-wrap items-end gap-3">
@@ -448,7 +323,7 @@ export function MappingCreateForm({
             >
               Batal
             </Button>
-            <Button type="submit" disabled={busy || !point}>
+            <Button type="submit" disabled={busy}>
               {busy ? "Menyimpan…" : "Simpan lokasi mapping"}
             </Button>
           </div>

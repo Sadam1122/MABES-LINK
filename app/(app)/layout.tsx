@@ -1,5 +1,6 @@
 import { Prisma, Role } from "@prisma/client";
 import { Building2 } from "lucide-react";
+import Link from "next/link";
 
 import { AppNav } from "@/components/app-nav";
 import { BrandLogo } from "@/components/brand-logo";
@@ -52,7 +53,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       <aside className="hidden min-h-screen flex-col bg-brand-deep text-white lg:fixed lg:inset-y-0 lg:flex lg:w-[244px]">
         <div className="border-b border-white/10 p-5">
           <div>
-            <BrandLogo className="max-w-[182px]" sizes="182px" />
+            <Link href="/dashboard" aria-label="MABES LINK, kembali ke dashboard"><BrandLogo className="max-w-[182px]" sizes="182px" /></Link>
             <p className="mt-2 text-[11px] text-blue-200">
               Operasional Cabang 11539
             </p>
@@ -60,12 +61,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         </div>
         <AppNav
           isAdmin={actor.role === Role.ADMIN}
+          canViewQrisRegistrations={actor.role === Role.ADMIN || actor.role === Role.OUT_BRANCH}
           roleLabel={roleLabel[actor.role]}
           scopeLabel={scopeLabel[actor.role]}
         />
       </aside>
       <AppNav
         isAdmin={actor.role === Role.ADMIN}
+        canViewQrisRegistrations={actor.role === Role.ADMIN || actor.role === Role.OUT_BRANCH}
         roleLabel={roleLabel[actor.role]}
         scopeLabel={scopeLabel[actor.role]}
         mobileOnly
@@ -74,7 +77,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <header className="sticky top-0 z-[1100] border-b bg-white/90 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
             <div className="flex items-center gap-3 lg:hidden">
-              <BrandLogo className="max-w-[142px]" sizes="142px" />
+              <Link href="/dashboard" aria-label="MABES LINK, kembali ke dashboard"><BrandLogo className="max-w-[142px]" sizes="142px" onLight /></Link>
               <span className="sr-only">11539 · B.2</span>
             </div>
             <div className="hidden items-center gap-2 text-sm text-slate-500 lg:flex">

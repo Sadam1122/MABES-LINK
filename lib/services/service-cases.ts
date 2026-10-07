@@ -204,6 +204,7 @@ export async function listAppointmentLocations(actor: Actor) {
           locationLabel: true,
           latitude: true,
           longitude: true,
+          mappingMarkerIcon: true,
           locationPhotos: {
             select: { id: true },
             orderBy: { createdAt: "desc" },
@@ -437,6 +438,7 @@ export async function createAppointment(
         latitude: input.latitude,
         longitude: input.longitude,
         locationSource: input.locationSource,
+        mappingMarkerIcon: input.mappingMarkerIcon,
         locationUpdatedAt: new Date(),
         productNeeds: [product.label],
       },
@@ -490,7 +492,7 @@ export async function createAppointment(
       entityId: prospect.id,
       action: "APPOINTMENT_PROSPECT_CREATED",
       branchId,
-      after: { internalCode, assignedToId: primaryPicId },
+      after: { internalCode, assignedToId: primaryPicId, mappingMarkerIcon: input.mappingMarkerIcon },
       requestId,
     });
     await writeAudit(tx, actor, {

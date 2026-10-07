@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import type { AppointmentMapPoint } from "@/components/appointment-spread-map";
+import { MarkerGlyph } from "@/components/marker-icon-picker";
 import { buttonVariants } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/format";
+import { useDebouncedValue } from "@/lib/client/use-debounced-value";
 
 const AppointmentSpreadMap = dynamic(
   () => import("@/components/appointment-spread-map"),
@@ -24,6 +26,7 @@ export function AppointmentSpreadWorkspace({
   referenceNow: string;
 }) {
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 280);
   const [status, setStatus] = useState("");
   const [pic, setPic] = useState("");
   const [time, setTime] = useState("all");
@@ -33,7 +36,7 @@ export function AppointmentSpreadWorkspace({
     [points],
   );
   const filtered = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase("id-ID");
+    const term = debouncedSearch.trim().toLocaleLowerCase("id-ID");
     const now = new Date(referenceNow).getTime();
     return points.filter((item) => {
       const matchesSearch =
@@ -49,12 +52,14 @@ export function AppointmentSpreadWorkspace({
         (time === "all" || (time === "upcoming" ? timestamp >= now : timestamp < now))
       );
     });
-  }, [pic, points, referenceNow, search, status, time]);
+  }, [debouncedSearch, pic, points, referenceNow, status, time]);
 
   return (
     <div className="space-y-5">
       <section className="card grid gap-3 p-4 md:grid-cols-5">
-        <input className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari kode, toko, lokasi, atau PIC" />
+        <label className="text-xs font-semibold text-slate-600">Cari janji
+          <input className="field mt-1" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Kode, toko, lokasi, atau PIC…" />
+        </label>
         <select className="field" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter status janji">
           <option value="">Semua status</option>
           <option value="CONFIRMED">Terkonfirmasi</option>
@@ -91,7 +96,7 @@ export function AppointmentSpreadWorkspace({
             {filtered.map((item) => (
               <article key={item.id} className="rounded-2xl border p-4">
                 <p className="font-mono text-xs text-blue-700">{item.code}</p>
-                <h3 className="mt-1 font-black">{item.label}</h3>
+                <h3 className="mt-1 flex items-center gap-2 font-bold"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-800"><MarkerGlyph icon={item.markerIcon} size={18} /></span>{item.label}</h3>
                 <p className="mt-1 text-xs text-slate-500">{item.locationLabel}</p>
                 <p className="mt-2 text-sm font-semibold">{formatDateTime(item.appointmentAt)}</p>
                 <p className="mt-1 text-xs text-slate-500">PIC: {item.picNames.join(", ")}</p>

@@ -23,7 +23,7 @@ function jakartaDayKey(date = new Date()) {
 }
 
 export async function submitPublicQrisContact(input: Input) {
-  await loadQrisSession(input.sessionId, input.token);
+  const { session } = await loadQrisSession(input.sessionId, input.token);
   if (!input.contactConsent) return { followUp: false as const };
 
   const branch = await db.branch.findUnique({ where: { code: "11539" } });
@@ -61,9 +61,13 @@ export async function submitPublicQrisContact(input: Input) {
         { publicDedupKey: dedupKey },
       ],
     },
-    select: { id: true },
+    select: { id: true, publicQrisRequestId: true },
   });
-  if (existing) return { followUp: true as const };
+  if (existing) {
+    if (existing.publicQrisRequestId && existing.publicQrisRequestId !== session.publicRequestId)
+      await db.qrisDesignSession.update({ where: { id: session.id }, data: { publicRequestId: existing.publicQrisRequestId } });
+    return { followUp: true as const };
+  }
 
   try {
     await db.$transaction(async (tx) => {
@@ -74,17 +78,18 @@ export async function submitPublicQrisContact(input: Input) {
           publicQrisRequestId: input.requestId,
           publicDedupKey: dedupKey,
           publicContactPhone: input.phone,
-          publicBusinessCategory: input.businessCategory,
+          publicBusinessCategory: input.businessCategory || null,
           publicBankRelationship: input.bankRelationship,
           publicContactWindow: input.contactWindow,
           publicContactConsentAt: now,
+          publicQrisTemplate: session.selectedTemplate,
           businessAlias: input.businessName,
           need:
             input.needNote ||
             "Permintaan informasi QRIS Custom dan solusi merchant.",
           contactPic: input.contactName,
-          businessSector: input.businessCategory,
-          addressHint: input.address,
+          businessSector: input.businessCategory || null,
+          addressHint: input.address || null,
           latitude: input.latitude,
           longitude: input.longitude,
           locationLabel: input.businessName,
@@ -134,11 +139,15 @@ export async function submitPublicQrisContact(input: Input) {
       });
     });
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    )
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const winner = await db.prospect.findFirst({
+        where: { OR: [{ publicQrisRequestId: input.requestId }, { publicDedupKey: dedupKey }] },
+        select: { publicQrisRequestId: true },
+      });
+      if (winner?.publicQrisRequestId)
+        await db.qrisDesignSession.update({ where: { id: session.id }, data: { publicRequestId: winner.publicQrisRequestId } });
       return { followUp: true as const };
+    }
     throw error;
   }
   return { followUp: true as const };

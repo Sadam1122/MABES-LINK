@@ -1,4 +1,4 @@
-import { apiError, jsonOk, parseJson } from "@/lib/api";
+import { apiError, assertSameOrigin, jsonOk, parseJson } from "@/lib/api";
 import { requireActor } from "@/lib/session";
 import { updateMappingLocation } from "@/lib/services/mapping";
 import { mappingLocationPatchSchema } from "@/lib/validation";
@@ -8,6 +8,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    assertSameOrigin(request);
     const actor = await requireActor();
     const { id } = await params;
     return jsonOk(

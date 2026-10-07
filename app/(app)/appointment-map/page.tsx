@@ -23,6 +23,7 @@ export default async function AppointmentMapPage() {
       locationLabel: item.prospect.locationLabel || "Titik lokasi janji",
       latitude: Number(item.prospect.latitude),
       longitude: Number(item.prospect.longitude),
+      markerIcon: item.prospect.mappingMarkerIcon,
       appointmentStatus: item.appointmentStatus,
       appointmentAt: item.appointmentAt.toISOString(),
       picNames: picNames.length ? picNames : [item.pic.name],

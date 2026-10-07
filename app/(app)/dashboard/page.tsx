@@ -7,17 +7,24 @@ import {
   UsersRound,
 } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { PageHeader } from "@/components/page-header";
 import { QrisPromo } from "@/components/qris-promo";
+import { HomeBannerCarousel } from "@/components/home-banner-carousel";
+import { HomeBannerManager } from "@/components/home-banner-manager";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/format";
 import { requirePageActor } from "@/lib/session";
 import { getDashboard } from "@/lib/services/dashboard";
+import { listHomeBanners } from "@/lib/services/home-banners";
+import { db } from "@/lib/db";
 
 export default async function DashboardPage() {
   const actor = await requirePageActor();
   const data = await getDashboard(actor);
+  const banners = await listHomeBanners();
+  const branch = actor.branchId ? await db.branch.findUnique({ where: { id: actor.branchId }, select: { code: true } }) : null;
   const cards = [
     {
       label: "Prospek",
@@ -74,6 +81,7 @@ export default async function DashboardPage() {
       <div className="mb-6">
         <QrisPromo />
       </div>
+      {banners.length > 0 && <div className="mb-6"><HomeBannerCarousel banners={banners} /></div>}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map(({ label, value, icon: Icon, tone }) => (
           <div className="card flex items-center gap-4 p-5" key={label}>
@@ -233,6 +241,31 @@ export default async function DashboardPage() {
           <p className="p-6 text-sm text-slate-500">Belum ada aktivitas.</p>
         )}
       </section>
+      <section className="mt-6 grid gap-4 overflow-hidden rounded-3xl border border-blue-100 bg-[#edf4fb] p-4 sm:p-6 lg:grid-cols-[1fr_.9fr] lg:items-center" aria-label="Promosi QRIS">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[.16em] text-blue-700">Untuk merchant yang membutuhkan</p>
+          <h2 className="mt-2 text-2xl font-black tracking-tight text-[#102b58] sm:text-3xl">Bantu tampilkan QRIS dengan desain yang rapi.</h2>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">Batik Nusantara atau Alam Indonesia dapat dipersonalisasi. Bingkai/desain digital tersedia gratis; penerbitan QRIS tetap melalui proses resmi.</p>
+          <Link href="/qris-custom" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-[#123d78] px-5 py-3 text-sm font-bold text-white hover:bg-[#0a2c5c]">Buka desain QRIS</Link>
+          <details className="mt-5 max-w-xl rounded-xl border border-blue-100 bg-white p-3 text-sm"><summary className="cursor-pointer font-bold text-[#102b58]">FAQ singkat: apakah desain ini menerbitkan QRIS?</summary><p className="mt-2 text-slate-600">Tidak. Gunakan QRIS resmi merchant; editor hanya menata bingkai visual dan tidak mengubah kode pembayaran.</p></details>
+        </div>
+        <Image src="/Gambar/QRIS%20Sign%20Mockups_%20Batik%20and%20Alam.png" alt="Mockup desain QRIS Batik dan Alam" width={1536} height={1024} className="h-auto w-full rounded-2xl border border-white object-cover shadow-lg" />
+      </section>
+      {branch?.code === "11539" && <HomeBannerManager initialBanners={banners.map((banner) => ({
+        id: banner.id, title: banner.title, description: banner.description, width: banner.width, height: banner.height,
+        canDelete: banner.createdById === actor.id || actor.role === "ADMIN" || actor.role === "SUPERVISOR",
+      }))} />}
+      <footer className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 pb-4 pt-5 text-xs text-slate-500">
+        <span>MABES LINK · KCP Mandiri Jakarta Mangga Besar 11539</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <Image src="/Gambar/logo.png" alt="MABES LINK" width={120} height={40} className="h-auto w-24 object-contain" />
+          <Image src="/Gambar/01-Mandiri%20Master%20Brand%20Logo.png" alt="Mandiri" width={100} height={34} className="h-auto w-20 object-contain" />
+          <Image src="/Gambar/Livin%2001-Master%20Brand%20Logo.png" alt="Livin' by Mandiri" width={100} height={34} className="h-auto w-20 object-contain" />
+          <Image src="/Gambar/Kopra%2001-Master%20Brand%20Logo.png" alt="Kopra by Mandiri" width={100} height={34} className="h-auto w-20 object-contain" />
+          <Image src="/Gambar/livin%20merchant.jpeg" alt="Livin' Merchant" width={100} height={34} className="h-auto w-20 object-contain" />
+          <Image src="/Gambar/main-danantara-indonesia-horizontal-logo.png" alt="Danantara Indonesia" width={110} height={30} className="h-auto w-24 object-contain" />
+        </div>
+      </footer>
     </>
   );
 }

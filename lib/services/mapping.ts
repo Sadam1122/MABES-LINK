@@ -1,4 +1,4 @@
-import { OpportunityStage, UsageStatus } from "@prisma/client";
+import { OpportunityStage } from "@prisma/client";
 import type { z } from "zod";
 
 import { writeAudit } from "@/lib/audit";
@@ -43,7 +43,7 @@ export async function createMappingLocation(
       data: {
         internalCode: makeCode("PR-11539"),
         businessAlias: input.businessAlias,
-        need: input.need,
+        need: "Belum dikonfirmasi",
         contactPic: input.contactPic ?? "Tidak dicantumkan",
         areaBlock: input.areaBlock,
         businessSector: input.businessSector,
@@ -53,24 +53,15 @@ export async function createMappingLocation(
         productNeeds: input.productNeeds,
         locationLabel: input.locationLabel,
         locationSource: input.locationSource,
-        locationUpdatedAt: new Date(),
+        locationUpdatedAt: input.latitude == null ? null : new Date(),
         mappingMarkerIcon: input.mappingMarkerIcon,
-        opportunityStage: OpportunityStage.READY,
+        opportunityStage: OpportunityStage.NEW,
         branchId,
         assignedToId: assignee.id,
         createdById: actor.id,
       },
     });
-    const usage = await tx.usageVerification.create({
-      data: {
-        prospectId: prospect.id,
-        status: UsageStatus.VERIFIED,
-        usedAt: input.usedAt,
-        evidenceReference: input.usageEvidenceReference,
-        note: "Penggunaan dicatat melalui mapping operasional.",
-        recordedById: actor.id,
-      },
-    });
+    await tx.mappingDiscovery.create({ data: { prospectId: prospect.id, sourceType: "UNKNOWN" } });
     await createAssignmentNotification(tx, {
       recipientId: prospect.assignedToId,
       branchId: prospect.branchId,
@@ -91,7 +82,7 @@ export async function createMappingLocation(
         latitude: prospect.latitude,
         longitude: prospect.longitude,
         mappingMarkerIcon: prospect.mappingMarkerIcon,
-        usageVerificationId: usage.id,
+        usageVerified: false,
       },
       requestId,
     });

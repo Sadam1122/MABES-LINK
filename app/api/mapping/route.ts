@@ -1,4 +1,4 @@
-import { apiError, jsonOk, parseJson } from "@/lib/api";
+import { apiError, assertSameOrigin, jsonOk, parseJson } from "@/lib/api";
 import { requireActor } from "@/lib/session";
 import { createMappingLocation } from "@/lib/services/mapping";
 import { listMappingProspects } from "@/lib/services/visits";
@@ -9,6 +9,7 @@ import {
 
 export async function POST(request: Request) {
   try {
+    assertSameOrigin(request);
     const actor = await requireActor();
     return jsonOk(
       await createMappingLocation(

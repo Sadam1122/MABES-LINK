@@ -11,14 +11,19 @@ import {
   ImageUp,
   LockKeyhole,
   MapPin,
+  Search,
+  ExternalLink,
   RotateCcw,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useDebouncedValue } from "@/lib/client/use-debounced-value";
 import { Dialog } from "@/components/ui/dialog";
-import { isSuppliedQrisTemplate, qrisTemplates, type QrisDesign } from "@/lib/qris-design";
+import { useFeedback } from "@/components/ui/feedback";
+import { isSuppliedQrisTemplate, qrisTemplates, qrisTemplateZones, type QrisDesign } from "@/lib/qris-design";
+import { qrisStickerPreview, qrisStickers } from "@/lib/qris-stickers";
 
 const LocationMap = dynamic(
   () => import("@/components/appointment-location-map"),
@@ -32,6 +37,7 @@ const LocationMap = dynamic(
   },
 );
 type Session = { id: string; token: string; expiresAt: string };
+type PlaceResult = { label: string; latitude: number; longitude: number };
 type Contact = {
   contactName: string;
   businessName: string;
@@ -85,10 +91,20 @@ const initialDesign: QrisDesign = {
   ornament: "STAR",
   inkSaver: false,
   bottomText: "",
+  bottomFont: "MODERN",
+  bottomFontSize: 32,
+  bottomFontWeight: "BOLD",
+  bottomColor: "#09345a",
+  qrZoom: 1,
+  qrPanX: 0,
+  qrPanY: 0,
+  stickers: [],
   sticker: "NONE",
   stickerDataUrl: "",
   stickerSide: "RIGHT",
+  stickerX: 0.9,
   stickerY: 0.5,
+  stickerSize: 58,
 };
 const steps = ["Informasi", "QRIS Resmi", "Template", "Kustomisasi", "Hasil"];
 const field =
@@ -102,11 +118,25 @@ async function apiJson<T>(url: string, body: unknown): Promise<T> {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok)
-    throw new Error(payload?.error?.message || "Permintaan gagal diproses.");
+    throw new Error(publicErrorMessage(payload, "Permintaan gagal diproses."));
   return payload.data as T;
 }
 
+function publicErrorMessage(payload: { error?: { message?: string; details?: { fieldErrors?: Record<string, string[]> } } }, fallback: string) {
+  const fields = payload.error?.details?.fieldErrors;
+  const first = fields ? Object.entries(fields).find(([, messages]) => messages?.length) : null;
+  if (first) return first[1][0];
+  return payload.error?.message || fallback;
+}
+
+function preferredContactTime(value: string) {
+  if (!value) return null;
+  const [date, time] = value.split("T");
+  return date && time ? `${date.slice(8, 10)}-${date.slice(5, 7)}-${date.slice(0, 4)} ${time} WIB` : null;
+}
+
 export function QrisCustomEditor() {
+  const { toast } = useFeedback();
   const [step, setStep] = useState(0);
   const [contact, setContact] = useState<Contact>(initialContact);
   const [file, setFile] = useState<File | null>(null);
@@ -121,9 +151,22 @@ export function QrisCustomEditor() {
   >("DESKTOP");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [missingFields, setMissingFields] = useState<string[]>([]);
   const [contactSent, setContactSent] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
   const [requestId] = useState(() => crypto.randomUUID());
+  const [placeQuery, setPlaceQuery] = useState("");
+  const debouncedPlaceQuery = useDebouncedValue(placeQuery, 500);
+  const placeController = useRef<AbortController | null>(null);
+  const lastPlaceQuery = useRef("");
+  const [placeResults, setPlaceResults] = useState<PlaceResult[]>([]);
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeMessage, setPlaceMessage] = useState("");
+
+  useEffect(() => {
+    if (error) toast(error, error.startsWith("File QRIS sementara berhasil") ? "success" : "error");
+  }, [error, toast]);
 
   useEffect(
     () => () => {
@@ -147,6 +190,47 @@ export function QrisCustomEditor() {
   );
   function setContactValue<K extends keyof Contact>(key: K, value: Contact[K]) {
     setContact((current) => ({ ...current, [key]: value }));
+    setMissingFields((current) => current.filter((item) => item !== key));
+    setError("");
+  }
+  const searchPlaces = useCallback(async (term: string, force = false) => {
+    const query = term.trim();
+    if (query.length < 3) {
+      if (force) setPlaceMessage("Ketik sedikitnya 3 karakter nama tempat atau jalan.");
+      return;
+    }
+    if (!force && query === lastPlaceQuery.current) return;
+    placeController.current?.abort();
+    const controller = new AbortController();
+    placeController.current = controller;
+    lastPlaceQuery.current = query;
+    setPlaceBusy(true);
+    setPlaceMessage("");
+    setPlaceResults([]);
+    try {
+      const response = await fetch(`/api/location-search?q=${encodeURIComponent(query)}`, { cache: "no-store", signal: controller.signal });
+      const payload = await response.json();
+      if (controller.signal.aborted) return;
+      if (!response.ok) throw new Error(publicErrorMessage(payload, "Pencarian tempat belum tersedia."));
+      setPlaceResults(payload.data as PlaceResult[]);
+      if (!payload.data.length) setPlaceMessage("Tempat tidak ditemukan. Coba kata kunci lain atau pilih pin pada peta.");
+    } catch (failure) {
+      if (!controller.signal.aborted) setPlaceMessage(failure instanceof Error ? failure.message : "Pencarian tempat belum tersedia.");
+    } finally {
+      if (!controller.signal.aborted) setPlaceBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (step !== 0) return;
+    const timer = window.setTimeout(() => void searchPlaces(debouncedPlaceQuery), 0);
+    return () => window.clearTimeout(timer);
+  }, [debouncedPlaceQuery, searchPlaces, step]);
+  useEffect(() => () => placeController.current?.abort(), []);
+  function googlePlaceSearchUrl() {
+    const url = new URL("https://www.google.com/maps/search/");
+    url.searchParams.set("api", "1");
+    url.searchParams.set("query", placeQuery.trim() || "Mangga Besar Jakarta");
+    return url.toString();
   }
   function selectFile(chosen: File | null) {
     setFile(chosen);
@@ -173,7 +257,17 @@ export function QrisCustomEditor() {
   function automaticDesign() {
     preset("BATIK_NUSANTARA");
   }
-  function selectStickerFile(chosen: File | null, side?: QrisDesign["stickerSide"]) {
+  function addSticker(kind: QrisDesign["stickers"][number]["kind"], dataUrl = "", position = { x: 0.85, y: 0.5 }) {
+    if (design.stickers.length >= 3) {
+      setError("Maksimal tiga stiker agar panel bawah tetap rapi.");
+      return;
+    }
+    const id = crypto.randomUUID();
+    changeDesign({ stickers: [...design.stickers, { id, kind, dataUrl, x: position.x, y: position.y, size: 52 }] });
+    setSelectedStickerId(id);
+    setError("");
+  }
+  function selectStickerFile(chosen: File | null, position?: { x: number; y: number }) {
     if (!chosen) return;
     if (!["image/png", "image/jpeg", "image/webp"].includes(chosen.type) || chosen.size > 320 * 1024) {
       setError("Stiker harus PNG, JPG, atau WebP dengan ukuran maksimal 320 KB.");
@@ -182,25 +276,44 @@ export function QrisCustomEditor() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") {
-        changeDesign({ sticker: "UPLOAD", stickerDataUrl: reader.result, stickerSide: side ?? design.stickerSide });
+        addSticker("UPLOAD", reader.result, position);
         setError("");
       }
     };
     reader.onerror = () => setError("Gambar stiker tidak dapat dibaca.");
     reader.readAsDataURL(chosen);
   }
+  function stickerPosition(clientX: number, clientY: number, element: HTMLElement, size = 52) {
+    const rect = element.getBoundingClientRect();
+    const zone = isSuppliedQrisTemplate(design.template) ? qrisTemplateZones[design.template].bottom : null;
+    const scale = zone ? rect.width / zone.width : 1;
+    const stickerPixels = size * scale;
+    const margin = 8 * scale;
+    return {
+      x: Math.max(0, Math.min(1, (clientX - rect.left - margin - stickerPixels / 2) / Math.max(1, rect.width - 2 * margin - stickerPixels))),
+      y: Math.max(0, Math.min(1, (clientY - rect.top - margin - stickerPixels / 2) / Math.max(1, rect.height - 2 * margin - stickerPixels))),
+    };
+  }
   function validateContact() {
-    if (
-      !contact.contactName.trim() ||
-      !contact.businessName.trim() ||
-      !/^\+?[0-9][0-9\s()-]{7,29}$/.test(contact.phone) ||
-      !contact.businessCategory.trim() ||
-      contact.address.trim().length < 3 ||
-      !contact.processingConsent
-    ) {
-      setError(
-        "Lengkapi nama kontak, usaha, nomor HP, kategori, alamat, dan persetujuan pemrosesan.",
-      );
+    const missing: string[] = [];
+    if (contact.businessName.trim().length < 2) missing.push("businessName");
+    if (contact.contactConsent && contact.contactName.trim().length < 2) missing.push("contactName");
+    if ((contact.contactConsent || contact.phone.trim()) && !/^\+?[0-9][0-9\s()-]{7,29}$/.test(contact.phone.trim())) missing.push("phone");
+    if (!contact.processingConsent) missing.push("processingConsent");
+    if ((contact.latitude === null) !== (contact.longitude === null)) missing.push("coordinates");
+    setMissingFields(missing);
+    if (missing.length) {
+      const labels: Record<string, string> = {
+        businessName: "nama usaha (minimal 2 huruf)",
+        contactName: "nama kontak untuk dihubungi",
+        phone: "nomor HP yang valid",
+        processingConsent: "persetujuan pemrosesan",
+        coordinates: "pasangan latitude dan longitude lengkap, atau hapus titik",
+      };
+      const message = `Periksa: ${missing.map((item) => labels[item]).join(", ")}.`;
+      if (error === message) toast(message, "error");
+      setError(message);
+      document.querySelector<HTMLInputElement>(`[data-field="${missing[0]}"]`)?.focus();
       return false;
     }
     setError("");
@@ -214,7 +327,7 @@ export function QrisCustomEditor() {
       businessName: contact.businessName.trim(),
       businessCategory: contact.businessCategory.trim(),
       address: contact.address.trim(),
-      contactWindow: contact.contactWindow.trim() || null,
+      contactWindow: preferredContactTime(contact.contactWindow),
       needNote: contact.needNote.trim() || null,
       sessionId: created.id,
       token: created.token,
@@ -241,7 +354,7 @@ export function QrisCustomEditor() {
           businessName: contact.businessName.trim(),
           businessCategory: contact.businessCategory.trim(),
           address: contact.address.trim(),
-          contactWindow: contact.contactWindow.trim() || null,
+          contactWindow: preferredContactTime(contact.contactWindow),
           needNote: contact.needNote.trim() || null,
         }),
       );
@@ -250,8 +363,8 @@ export function QrisCustomEditor() {
         body: form,
       });
       const payload = await response.json();
-      if (!response.ok)
-        throw new Error(payload?.error?.message || "Unggah gagal.");
+        if (!response.ok)
+          throw new Error(publicErrorMessage(payload, "Unggah gagal."));
       const created = {
         id: payload.data.id,
         token: payload.data.token,
@@ -289,9 +402,7 @@ export function QrisCustomEditor() {
         });
         if (!response.ok) {
           const payload = await response.json();
-          throw new Error(
-            payload?.error?.message || "Desain tidak dapat dibuat.",
-          );
+          throw new Error(publicErrorMessage(payload, "Desain tidak dapat dibuat."));
         }
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
@@ -369,14 +480,20 @@ export function QrisCustomEditor() {
     }
   }
 
+  const bottomZone = isSuppliedQrisTemplate(design.template)
+    ? qrisTemplateZones[design.template].bottom
+    : qrisTemplateZones.BATIK_NUSANTARA.bottom;
+  const selectedSticker = design.stickers.find((item) => item.id === selectedStickerId)
+    ?? design.stickers.at(-1);
+
   return (
-    <div className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-8">
+    <div className="mx-auto max-w-7xl px-4 pb-20 pt-7 sm:px-8 sm:pt-10">
       <div className="mb-8 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
         <div>
-          <p className="text-xs font-black uppercase tracking-[.25em] text-blue-700">
+          <p className="text-[11px] font-bold uppercase tracking-[.16em] text-blue-700">
             QRIS Custom
           </p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-[#102b58] sm:text-5xl">
+          <h1 className="mt-2 text-3xl font-bold tracking-[-.04em] text-[#102b58] sm:text-5xl">
             QRIS Usahamu, Gayamu.
           </h1>
           <p className="mt-3 max-w-2xl text-slate-600">
@@ -397,7 +514,7 @@ export function QrisCustomEditor() {
         {steps.map((name, index) => (
           <div
             key={name}
-            className={`rounded-xl px-1 py-3 text-center text-[10px] font-bold sm:text-sm ${step === index ? "bg-[#102b58] text-white" : index < step ? "bg-blue-100 text-blue-900" : "bg-white text-slate-500"}`}
+            className={`rounded-lg border px-1 py-3 text-center text-[10px] font-semibold sm:text-sm ${step === index ? "border-[#102b58] bg-[#102b58] text-white" : index < step ? "border-blue-100 bg-blue-50 text-blue-900" : "border-slate-200 bg-white text-slate-500"}`}
           >
             {index < step ? "✓" : index + 1}.{" "}
             <span className="hidden sm:inline">{name}</span>
@@ -419,21 +536,21 @@ export function QrisCustomEditor() {
           {error}
         </div>
       )}
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-xl shadow-slate-200/50 sm:p-8">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_16px_40px_rgba(15,23,42,.04)] sm:p-8">
         {step === 0 && (
           <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-black">Kenali usaha Anda</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Informasi lokasi membantu menempatkan kebutuhan Anda ke petugas
-                yang tepat hanya jika Anda setuju dihubungi.
-              </p>
+            <div className="rounded-2xl border-t-4 border-amber-400 bg-[#092c60] p-5 text-white sm:p-7">
+              <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-amber-200">Langkah 1 · Informasi usaha</span>
+              <h2 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">Desain QRIS untuk usaha Anda</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Isi nama usaha untuk desain. Data kontak hanya diperlukan bila Anda ingin petugas menghubungi; kolom lainnya bebas dikosongkan.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="text-sm font-semibold">
-                Nama kontak *
+                Nama kontak {contact.contactConsent ? "*" : "(opsional)"}
                 <input
-                  className={field}
+                  data-field="contactName"
+                  aria-invalid={missingFields.includes("contactName")}
+                  className={`${field} ${missingFields.includes("contactName") ? "border-red-500 bg-red-50" : ""}`}
                   value={contact.contactName}
                   onChange={(event) =>
                     setContactValue("contactName", event.target.value)
@@ -444,7 +561,9 @@ export function QrisCustomEditor() {
               <label className="text-sm font-semibold">
                 Nama usaha *
                 <input
-                  className={field}
+                  data-field="businessName"
+                  aria-invalid={missingFields.includes("businessName")}
+                  className={`${field} ${missingFields.includes("businessName") ? "border-red-500 bg-red-50" : ""}`}
                   value={contact.businessName}
                   onChange={(event) => {
                     setContactValue("businessName", event.target.value);
@@ -456,9 +575,11 @@ export function QrisCustomEditor() {
                 />
               </label>
               <label className="text-sm font-semibold">
-                Nomor HP *
+                Nomor HP {contact.contactConsent ? "*" : "(opsional)"}
                 <input
-                  className={field}
+                  data-field="phone"
+                  aria-invalid={missingFields.includes("phone")}
+                  className={`${field} ${missingFields.includes("phone") ? "border-red-500 bg-red-50" : ""}`}
                   value={contact.phone}
                   onChange={(event) =>
                     setContactValue("phone", event.target.value)
@@ -468,7 +589,7 @@ export function QrisCustomEditor() {
                 />
               </label>
               <label className="text-sm font-semibold">
-                Kategori usaha *
+                Kategori usaha (opsional)
                 <input
                   className={field}
                   value={contact.businessCategory}
@@ -479,7 +600,7 @@ export function QrisCustomEditor() {
                 />
               </label>
               <label className="text-sm font-semibold md:col-span-2">
-                Alamat usaha minimum *
+                Alamat usaha (opsional)
                 <input
                   className={field}
                   value={contact.address}
@@ -527,14 +648,15 @@ export function QrisCustomEditor() {
                 </select>
               </label>
               <label className="text-sm font-semibold">
-                Waktu nyaman dihubungi (opsional)
+                Tanggal dan jam nyaman dihubungi (opsional, WIB)
                 <input
                   className={field}
+                  type="datetime-local"
+                  step="60"
                   value={contact.contactWindow}
                   onChange={(event) =>
                     setContactValue("contactWindow", event.target.value)
                   }
-                  placeholder="Contoh: hari kerja, 09.00–12.00"
                 />
               </label>
               <label className="text-sm font-semibold">
@@ -548,10 +670,21 @@ export function QrisCustomEditor() {
                 />
               </label>
             </div>
-            <div className="rounded-2xl border border-slate-200 p-4">
+            <div className={`rounded-2xl border p-4 ${missingFields.includes("coordinates") ? "border-red-500 bg-red-50" : "border-slate-200"}`}>
               <h3 className="mb-2 flex items-center gap-2 font-bold">
                 <MapPin className="h-5 w-5" /> Lokasi usaha (opsional)
               </h3>
+              <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                <label htmlFor="place-search" className="mb-2 block text-sm font-semibold text-slate-800">Cari toko atau alamat publik</label>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input id="place-search" className={`${field} sm:flex-1`} value={placeQuery} onChange={(event) => { placeController.current?.abort(); lastPlaceQuery.current = ""; setPlaceBusy(false); setPlaceResults([]); setPlaceMessage(""); setPlaceQuery(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchPlaces(placeQuery, true); } }} placeholder="Contoh: nama toko atau Jalan Mangga Besar" autoComplete="off" />
+                  <Button type="button" onClick={() => void searchPlaces(placeQuery, true)} disabled={placeBusy}><Search size={16} />{placeBusy ? "Mencari…" : "Cari lokasi"}</Button>
+                  <a href={googlePlaceSearchUrl()} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-100"><ExternalLink size={16} />Google Maps</a>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-slate-500">Hasil diperbarui otomatis setelah Anda berhenti mengetik 0,5 detik. Masukkan tempat/alamat publik saja. Pencarian internal memerlukan penyedia yang diizinkan; Google Maps terbuka terpisah.</p>
+                {placeMessage && <p role="status" className="mt-2 text-xs font-medium text-amber-800">{placeMessage}</p>}
+                {placeResults.length > 0 && <ul className="mt-3 max-h-56 divide-y overflow-y-auto rounded-xl border bg-white" aria-label="Hasil pencarian lokasi">{placeResults.map((result, index) => <li key={`${result.latitude}-${result.longitude}-${index}`}><button type="button" className="flex w-full items-start gap-2 p-3 text-left text-sm hover:bg-blue-50" onClick={() => { setContact((current) => ({ ...current, address: result.label, latitude: result.latitude, longitude: result.longitude, locationSource: "MAP_PIN" })); setPlaceResults([]); setPlaceMessage("Lokasi dipilih. Pastikan pin pada peta sudah benar."); }}><MapPin size={17} className="mt-0.5 shrink-0 text-blue-700" /><span>{result.label}</span></button></li>)}</ul>}
+              </div>
               <p className="mb-3 text-xs text-slate-500">
                 Klik peta untuk titik usaha. Koordinat tidak wajib untuk membuat
                 desain. Peta memakai tile OpenStreetMap; IP dan permintaan tile
@@ -573,6 +706,7 @@ export function QrisCustomEditor() {
                 <label className="text-xs">
                   Latitude
                   <input
+                    data-field="coordinates"
                     className={field}
                     type="number"
                     step="any"
@@ -648,10 +782,11 @@ export function QrisCustomEditor() {
                 </Button>
               </div>
             </div>
-            <div className="space-y-3 rounded-2xl bg-blue-50 p-4 text-sm">
+            <div className={`space-y-3 rounded-2xl p-4 text-sm ${missingFields.includes("processingConsent") ? "border border-red-400 bg-red-50" : "bg-blue-50"}`}>
               <label className="flex gap-3">
                 <input
                   type="checkbox"
+                  data-field="processingConsent"
                   checked={contact.processingConsent}
                   onChange={(event) =>
                     setContactValue("processingConsent", event.target.checked)
@@ -785,29 +920,28 @@ export function QrisCustomEditor() {
                 menindaklanjuti sesuai ketersediaan.
               </p>
             )}
-            <div>
-              <h2 className="text-xl font-black">Pilih template</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Dua bingkai/desain QRIS gratis. Logo, bingkai, dan ruang QRIS
-                tetap utuh pada kedua pilihan.
-              </p>
+            <div className="overflow-hidden rounded-2xl border-t-4 border-amber-400 bg-[#092c60] p-6 text-white sm:p-8">
+              <span className="rounded-full border border-amber-300/40 bg-amber-300/15 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-amber-200">Studio QRIS · Gratis</span>
+              <h2 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">Pilih suasana untuk usaha Anda</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">Dua bingkai siap pakai dengan sentuhan Nusantara. Pilih satu, lalu atur ukuran QRIS, tulisan, dan stiker. Logo serta bingkai tetap utuh.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              {qrisTemplates.map((item) => (
+              {qrisTemplates.map((item, index) => (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => preset(item.id)}
-                  className={`overflow-hidden rounded-2xl border-2 text-left transition hover:-translate-y-1 hover:shadow-lg ${design.template === item.id ? "border-blue-700" : "border-slate-200"}`}
+                  aria-pressed={design.template === item.id}
+                  className={`group overflow-hidden rounded-2xl border-2 bg-white text-left shadow-sm transition duration-200 hover:shadow-lg ${design.template === item.id ? "border-[#d79e1b] ring-4 ring-amber-100" : "border-slate-200 hover:border-amber-400"}`}
                 >
-                  <div className="grid h-72 place-items-center bg-slate-100 p-3">
-                    <img src={item.image} alt={`Template ${item.label}`} className="h-full max-w-full object-contain" />
+                  <div className="relative grid h-[360px] place-items-center bg-[#f4f6f8] p-5 sm:h-[420px]">
+                    <span className="absolute left-4 top-4 rounded-full bg-[#092b52] px-3 py-1 text-xs font-black text-white">0{index + 1} / 02</span>
+                    <span className={`absolute right-4 top-4 rounded-full px-3 py-1 text-[11px] font-black shadow ${design.template === item.id ? "bg-amber-400 text-[#092b52]" : "bg-white/95 text-blue-900"}`}>{design.template === item.id ? "✓ DESAIN DIPILIH" : "DESAIN GRATIS"}</span>
+                    <img src={item.image} alt={`Template ${item.label}`} className="h-full max-w-full rounded-lg object-contain drop-shadow-2xl transition duration-300 group-hover:scale-[1.03]" />
                   </div>
-                  <div className="flex items-center justify-between p-4 font-bold">
-                    {item.label}
-                    {design.template === item.id && (
-                      <Check className="h-5 w-5 text-blue-700" />
-                    )}
+                  <div className="flex items-center justify-between gap-3 p-5">
+                    <div><p className="text-lg font-black text-[#092b52]">{item.label}</p><p className="mt-1 text-xs leading-5 text-slate-600">{item.id === "BATIK_NUSANTARA" ? "Klasik, hangat, dan berkarakter." : "Segar, tenang, dan bernuansa alam."}</p></div>
+                    <span className={`grid size-9 shrink-0 place-items-center rounded-full ${design.template === item.id ? "bg-[#f5b72d] text-[#092b52]" : "bg-slate-100 text-slate-400"}`}><Check className="size-5" /></span>
                   </div>
                 </button>
               ))}
@@ -827,13 +961,29 @@ export function QrisCustomEditor() {
             <div>
               <h2 className="text-xl font-black">Kustomisasi tampilan</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Ubah tulisan pada panel bawah dan tambahkan satu stiker jika
-                diinginkan. Logo, bingkai, dan area QRIS tidak dapat diedit.
+                Pilih gaya huruf dan stiker seperti mini photobooth. Semua
+                dekorasi tetap di panel bawah; logo dan QRIS terkunci.
               </p>
             </div>
             {isSuppliedQrisTemplate(design.template) && (
               <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className="space-y-5 rounded-2xl border bg-white p-5">
+                  <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-amber-50 p-4">
+                    <p className="text-sm font-black text-[#09345a]">Posisi QRIS resmi</p>
+                    <p className="mt-1 text-xs text-slate-600">QRIS selalu berada di belakang template. Zoom dan geser hanya berlaku di ruang tengah; kode harus tetap terbaca.</p>
+                    <label className="mt-3 block text-sm font-semibold">Zoom QRIS: {Math.round(design.qrZoom * 100)}%
+                      <input type="range" min="70" max="140" step="5" value={Math.round(design.qrZoom * 100)} onChange={(event) => changeDesign({ qrZoom: Number(event.target.value) / 100 })} className="mt-2 w-full" />
+                    </label>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs font-semibold">Geser horizontal
+                        <input type="range" min="-100" max="100" step="5" value={Math.round(design.qrPanX * 100)} onChange={(event) => changeDesign({ qrPanX: Number(event.target.value) / 100 })} className="mt-2 w-full" />
+                      </label>
+                      <label className="text-xs font-semibold">Geser vertikal
+                        <input type="range" min="-100" max="100" step="5" value={Math.round(design.qrPanY * 100)} onChange={(event) => changeDesign({ qrPanY: Number(event.target.value) / 100 })} className="mt-2 w-full" />
+                      </label>
+                    </div>
+                    <button type="button" onClick={() => changeDesign({ qrZoom: 1, qrPanX: 0, qrPanY: 0 })} className="mt-2 text-xs font-bold text-blue-800 hover:underline">Kembalikan posisi QRIS</button>
+                  </div>
                   <label className="block text-sm font-semibold">
                     Tulisan di panel bawah
                     <input
@@ -845,40 +995,63 @@ export function QrisCustomEditor() {
                     />
                     <span className="mt-1 block text-xs font-normal text-slate-500">Kosongkan untuk memakai nama usaha. Maksimal 72 karakter.</span>
                   </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-semibold">Gaya huruf
+                      <select className={field} value={design.bottomFont} onChange={(event) => changeDesign({ bottomFont: event.target.value as QrisDesign["bottomFont"] })}>
+                        <option value="MODERN">Modern</option>
+                        <option value="CLASSIC">Klasik elegan</option>
+                        <option value="SCRIPT">Skrip elegan</option>
+                        <option value="RETRO">Retro</option>
+                      </select>
+                    </label>
+                    <label className="text-sm font-semibold">Ketebalan
+                      <select className={field} value={design.bottomFontWeight} onChange={(event) => changeDesign({ bottomFontWeight: event.target.value as QrisDesign["bottomFontWeight"] })}>
+                        <option value="BOLD">Tebal</option><option value="NORMAL">Normal</option>
+                      </select>
+                    </label>
+                    <label className="text-sm font-semibold">Ukuran huruf: {design.bottomFontSize} px
+                      <input type="range" min="18" max="40" value={design.bottomFontSize} onChange={(event) => changeDesign({ bottomFontSize: Number(event.target.value) })} className="mt-4 w-full" />
+                    </label>
+                    <label className="text-sm font-semibold">Warna tulisan
+                      <input type="color" value={design.bottomColor} onChange={(event) => changeDesign({ bottomColor: event.target.value })} className="mt-2 h-10 w-full rounded-xl border border-slate-300 bg-white" />
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-500">Tulisan panjang otomatis dikecilkan agar tetap di panel bawah.</p>
                   <div className="space-y-2">
-                    <p className="text-sm font-semibold">Stiker opsional</p>
-                    <div className="flex flex-wrap gap-2">
-                      {([ ["NONE", "Tanpa stiker"], ["FLOWER", "✿ Bunga"], ["STAR", "★ Bintang"], ["SPARKLE", "✦ Kilau"] ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          draggable={value !== "NONE"}
-                          onDragStart={(event) => event.dataTransfer.setData("text/sticker", value)}
-                          onClick={() => changeDesign({ sticker: value })}
-                          className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${design.sticker === value ? "border-blue-700 bg-blue-50 text-blue-800" : "border-slate-300 hover:border-blue-400"}`}
-                        >{label}</button>
+                    <p className="text-sm font-semibold">Koleksi stiker</p>
+                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+                      {qrisStickers.map((item) => (
+                        <button key={item.id} type="button" draggable
+                          onDragStart={(event) => event.dataTransfer.setData("text/sticker", item.id)}
+                          onClick={() => addSticker(item.id)}
+                          title={`Pilih atau seret stiker ${item.label}`}
+                          className={`grid min-h-16 place-items-center rounded-xl border p-1 transition hover:-translate-y-0.5 hover:shadow ${selectedSticker?.kind === item.id ? "border-blue-700 bg-blue-50" : "border-slate-200 bg-white"}`}>
+                          <img src={qrisStickerPreview(item.id)} alt="" className="h-9 w-9" />
+                          <span className="text-[10px] font-medium text-slate-700">{item.label}</span>
+                        </button>
                       ))}
                     </div>
-                    <p className="text-xs text-slate-500">Klik stiker, atau seret ke sisi kiri/kanan panel bawah pada pratinjau.</p>
+                    <p className="text-xs text-slate-500">Pilih hingga 3 stiker. Klik atau seret dari koleksi; setelah ditempel, geser dengan mouse atau jari.</p>
                   </div>
                   <label className="block text-sm font-semibold">
                     Unggah stiker sendiri (opsional)
                     <input type="file" accept="image/png,image/jpeg,image/webp" className={field} onChange={(event) => selectStickerFile(event.target.files?.[0] ?? null)} />
                     <span className="mt-1 block text-xs font-normal text-slate-500">PNG/JPG/WebP, 64–2000 px per sisi, maksimal 320 KB. Gambar diperkecil tanpa metadata sebelum ditempel.</span>
                   </label>
-                  {design.sticker !== "NONE" && (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="text-sm font-semibold">Posisi stiker
-                        <select className={field} value={design.stickerSide} onChange={(event) => changeDesign({ stickerSide: event.target.value as QrisDesign["stickerSide"] })}>
-                          <option value="LEFT">Kiri</option><option value="RIGHT">Kanan</option>
-                        </select>
+                  {selectedSticker && (
+                    <div className="space-y-3 rounded-xl bg-slate-50 p-3">
+                      <p className="text-sm font-bold">Atur stiker {design.stickers.findIndex((item) => item.id === selectedSticker.id) + 1} dari {design.stickers.length}</p>
+                      <label className="block text-sm font-semibold">Ukuran: {selectedSticker.size} px
+                        <input type="range" min="28" max="70" value={selectedSticker.size} onChange={(event) => changeDesign({ stickers: design.stickers.map((item) => item.id === selectedSticker.id ? { ...item, size: Number(event.target.value) } : item) })} className="mt-3 w-full" />
                       </label>
-                      <label className="text-sm font-semibold">Tinggi stiker
-                        <input type="range" min="0" max="1" step="0.05" value={design.stickerY} onChange={(event) => changeDesign({ stickerY: Number(event.target.value) })} className="mt-4 w-full" />
-                      </label>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => changeDesign({ stickers: design.stickers.map((item) => item.id === selectedSticker.id ? { ...item, x: 0 } : item) })} className="rounded-lg border px-3 py-1.5 text-xs font-bold">Kiri</button>
+                        <button type="button" onClick={() => changeDesign({ stickers: design.stickers.map((item) => item.id === selectedSticker.id ? { ...item, x: 1 } : item) })} className="rounded-lg border px-3 py-1.5 text-xs font-bold">Kanan</button>
+                        <button type="button" onClick={() => { changeDesign({ stickers: design.stickers.filter((item) => item.id !== selectedSticker.id) }); setSelectedStickerId(null); }} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-700">Hapus</button>
+                      </div>
                     </div>
                   )}
-                  <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Stiker hanya dapat berada di sisi panel bawah. Foto atau dokumen pribadi jangan diunggah.</p>
+                  <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Stiker hanya dapat digeser di panel bawah. Jangan unggah foto nasabah atau dokumen pribadi.</p>
                 </div>
                 <div className="rounded-2xl bg-slate-100 p-4 sm:p-6">
                   <div className="relative mx-auto w-full max-w-[360px] overflow-hidden rounded-lg bg-white shadow-xl" style={{ aspectRatio: "1064 / 1478" }}>
@@ -892,11 +1065,42 @@ export function QrisCustomEditor() {
                       onDrop={(event) => {
                         event.preventDefault();
                         const value = event.dataTransfer.getData("text/sticker");
-                        const side = event.clientX < event.currentTarget.getBoundingClientRect().left + event.currentTarget.getBoundingClientRect().width / 2 ? "LEFT" : "RIGHT";
-                        if (["FLOWER", "STAR", "SPARKLE"].includes(value)) changeDesign({ sticker: value as QrisDesign["sticker"], stickerSide: side });
-                        else if (event.dataTransfer.files.length) selectStickerFile(event.dataTransfer.files[0], side);
+                        const position = stickerPosition(event.clientX, event.clientY, event.currentTarget);
+                        if (qrisStickers.some((item) => item.id === value)) addSticker(value as QrisDesign["stickers"][number]["kind"], "", position);
+                        else if (event.dataTransfer.files.length) selectStickerFile(event.dataTransfer.files[0], position);
                       }}
-                    />
+                    >
+                      {design.stickers.map((item, index) => (
+                        <button key={item.id} type="button" aria-label={`Geser stiker ${index + 1}`} title={`Geser stiker ${index + 1}`}
+                          className={`absolute z-20 touch-none cursor-grab rounded border-2 bg-blue-200/20 shadow-sm active:cursor-grabbing ${selectedSticker?.id === item.id ? "border-blue-600" : "border-amber-500"}`}
+                          style={{
+                            left: `${(8 + (bottomZone.width - 16 - item.size) * item.x) / bottomZone.width * 100}%`,
+                            top: `${(8 + (bottomZone.height - 16 - item.size) * item.y) / bottomZone.height * 100}%`,
+                            width: `${item.size / bottomZone.width * 100}%`,
+                            height: `${item.size / bottomZone.height * 100}%`,
+                          }}
+                          onPointerDown={(event) => { setSelectedStickerId(item.id); event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); }}
+                          onPointerMove={(event) => {
+                            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                            const target = event.currentTarget.parentElement;
+                            if (!target) return;
+                            const position = stickerPosition(event.clientX, event.clientY, target, item.size);
+                            setDesign((current) => ({ ...current, stickers: current.stickers.map((entry) => entry.id === item.id ? { ...entry, ...position } : entry) }));
+                          }}
+                          onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+                          onKeyDown={(event) => {
+                            const delta = event.shiftKey ? 0.1 : 0.03;
+                            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+                            event.preventDefault();
+                            setDesign((current) => ({ ...current, stickers: current.stickers.map((entry) => entry.id === item.id ? {
+                              ...entry,
+                              x: Math.max(0, Math.min(1, entry.x + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0))),
+                              y: Math.max(0, Math.min(1, entry.y + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0))),
+                            } : entry) }));
+                          }}
+                        />
+                      ))}
+                    </div>
                   </div>
                   <p className="mt-3 text-center text-xs text-slate-600">Pratinjau mengikuti hasil PNG. Area tengah dan logo tetap terkunci.</p>
                 </div>

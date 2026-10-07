@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import { divIcon } from "leaflet";
 import {
   CircleMarker,
   MapContainer,
+  Marker,
   Polygon,
   TileLayer,
   Tooltip,
@@ -15,6 +17,7 @@ import {
   MANGGA_BESAR_BOUNDARY,
   MANGGA_BESAR_CENTER,
 } from "@/lib/mangga-besar-boundary";
+import { mappingMarkerGlyphs, type MappingMarkerIconValue } from "@/lib/mapping-icons";
 
 function PickLocation({
   onPick,
@@ -45,10 +48,12 @@ export default function AppointmentLocationMap({
   point,
   onPick,
   pointLabel = "Titik janji",
+  markerIcon,
 }: {
   point: { latitude: number; longitude: number } | null;
   onPick: (latitude: number, longitude: number) => void;
   pointLabel?: string;
+  markerIcon?: MappingMarkerIconValue;
 }) {
   return (
     <MapContainer
@@ -89,7 +94,7 @@ export default function AppointmentLocationMap({
       </Polygon>
       <PickLocation onPick={onPick} />
       <FocusPoint point={point} />
-      {point ? (
+      {point && markerIcon ? <Marker position={[point.latitude, point.longitude]} icon={divIcon({ className: "appointment-selected-marker", html: `<span aria-hidden="true" style="display:grid;place-items:center;width:42px;height:42px;border:3px solid white;border-radius:14px 14px 14px 4px;background:#0b4d91;color:white;box-shadow:0 8px 22px rgba(15,23,42,.28)"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${mappingMarkerGlyphs[markerIcon]}</svg></span>`, iconSize: [42, 42], iconAnchor: [21, 42] })}><Tooltip>{pointLabel}</Tooltip></Marker> : point ? (
         <CircleMarker
           center={[point.latitude, point.longitude]}
           radius={10}

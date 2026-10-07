@@ -1,6 +1,6 @@
 # Audit Non-Duplikasi CAKRA
 
-Tanggal audit kode: 5 Oktober 2026 (Asia/Jakarta)
+Tanggal audit kode: 6 Oktober 2026 (Asia/Jakarta)
 
 ## Kesimpulan
 
@@ -20,6 +20,7 @@ Model bernama `Prospect` dipertahankan karena merupakan model existing dari impl
 | Kendali layanan       | `ServiceCase` menyatukan kasus in-branch/out-branch sampai ditutup dan memisahkan penyelesaian dari penggunaan     | Fokus implementasi MABES LINK                            |
 | Lokasi/foto           | Metadata tambahan pada referensi yang sama; foto privat hanya untuk mengenali tempat                               | Kebijakan data/lokasi organisasi wajib disetujui         |
 | Batas wilayah peta    | Overlay referensi administratif Mangga Besar untuk filter/fokus; tidak membuat lead, visit, atau skor baru         | Cakupan wilayah kerja cabang wajib dikonfirmasi internal |
+| Discovery dan cross-selling | `MappingDiscovery` dan `MappingOpportunity` adalah metadata pada `Prospect` yang sama, unik per prospek × kode produk. Tidak ada master lead kedua; penawaran produk terkunci default sampai daftar kode disetujui melalui konfigurasi server. | Apakah discovery/peluang/reminder ini sudah tersedia di CAKRA harus diputuskan pemilik proses; jangan menyalin aktivitas ganda ke produksi tanpa prosedur resmi. |
 
 ## Kontrol teknis
 
@@ -32,6 +33,8 @@ Model bernama `Prospect` dipertahankan karena merupakan model existing dari impl
 - QRIS Custom publik tanpa izin dihubungi hanya memiliki sesi file sementara dan tidak membuat `Prospect`. Dengan izin dihubungi, satu `Prospect` existing dibuat dengan `publicQrisRequestId`/`publicDedupKey` unik, `FollowUp` internal, PIC cabang 11539, dan audit; tidak ada tabel lead kedua atau sinkronisasi CAKRA. Kesetaraan/rekonsiliasi dengan lead CAKRA belum disetujui pemilik proses.
 - API pembuatan prospek manual mengembalikan `MANUAL_REFERENCE_DISABLED` kecuali flag server secara eksplisit diaktifkan.
 - Tidak ada endpoint, token, scraper, atau kredensial CAKRA/Kopra/core banking di repo.
+- Tidak ditemukan kontrak API resmi, deep link yang disetujui, atau dokumentasi hak akses CAKRA di repo; karena itu tidak dibuat integrasi otomatis, pencarian CAKRA, atau tautan yang ditebak. Referensi `cakraReference` tetap opsional dan unik pada record existing. Workbook Mapping hanya memakai 14 kolom lokasi, tanpa CIF.
+- Pada 7 Oktober 2026, 42 lokasi dari workbook pengguna diimpor ke `Prospect` existing pada database lokal cabang 11539 setelah pratinjau dan konfirmasi permintaan. Semua masih `Belum dikonfirmasi`, tanpa pin dan tanpa verifikasi penggunaan; impor ini **bukan** rekonsiliasi atau sinkronisasi CAKRA. Sebelum pemakaian operasional nyata, pemilik proses perlu menentukan apakah lokasi yang sama sudah dicatat di CAKRA dan bagaimana menghindari entri ganda lintas sistem.
 - Seeder role khusus testing tidak membuat lead/prospek, visit, pipeline, atau reminder CAKRA. Seeder menolak database operasional, hanya membuat empat akun domain `.test` pada database yang namanya mengandung `test`, dan kredensialnya hanya ditulis ke `role.md` yang diabaikan Git.
 - Tidak ada seeder data bisnis, kredensial demo pada UI, integrasi, atau sinkronisasi CAKRA di repo. Fixture tes lain dibuat sementara oleh suite tes dan dibersihkan setelah pemeriksaan.
 - ADMIN mempunyai cakupan aplikasi lintas cabang, tetapi flag ini tidak memberi akses ke CAKRA/core banking dan bukan pengganti kewenangan sistem sumber.

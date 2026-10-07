@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isSuppliedQrisTemplate, qrisDesignSchema, qrisTemplateZones, type QrisDesign } from "@/lib/qris-design";
+import { qrisStickerSvg, type QrisStickerId } from "@/lib/qris-stickers";
 import { decodeQris, hashValue } from "@/lib/qris-custom";
 import { AppError } from "@/lib/errors";
 
@@ -141,17 +142,14 @@ async function prepareBusinessLogo(dataUrl: string) {
     .toBuffer();
 }
 
-async function prepareSticker(design: QrisDesign) {
-  if (design.sticker === "NONE") return null;
-  if (design.sticker !== "UPLOAD") {
-    const symbol = design.sticker === "FLOWER"
-      ? `<g fill="#d6a044">${Array.from({ length: 8 }, (_, index) => `<ellipse cx="32" cy="16" rx="8" ry="14" transform="rotate(${index * 45} 32 32)"/>`).join("")}<circle cx="32" cy="32" r="9" fill="#0b3655"/></g>`
-      : design.sticker === "STAR"
-        ? `<polygon points="32,3 40,23 61,23 44,37 50,59 32,46 14,59 20,37 3,23 24,23" fill="#d6a044" stroke="#0b3655" stroke-width="2"/>`
-        : `<path d="M32 2 L39 25 L62 32 L39 39 L32 62 L25 39 L2 32 L25 25Z" fill="#d6a044" stroke="#0b3655" stroke-width="2"/>`;
-    return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">${symbol}</svg>`)).png().toBuffer();
+type PlacedSticker = QrisDesign["stickers"][number];
+
+async function prepareSticker(sticker: Pick<PlacedSticker, "kind" | "dataUrl" | "size">) {
+  if (sticker.kind !== "UPLOAD") {
+    return sharp(Buffer.from(qrisStickerSvg(sticker.kind as QrisStickerId)))
+      .resize(sticker.size, sticker.size).png().toBuffer();
   }
-  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(design.stickerDataUrl);
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(sticker.dataUrl);
   if (!match) throw new AppError("Stiker harus PNG, JPG, atau WebP.", 422, "INVALID_STICKER");
   const input = Buffer.from(match[2], "base64");
   if (!input.length || input.length > 320 * 1024)
@@ -165,7 +163,9 @@ async function prepareSticker(design: QrisDesign) {
   const format = match[1] === "image/jpeg" ? "jpeg" : match[1] === "image/png" ? "png" : "webp";
   if (meta.format !== format || !meta.width || !meta.height || meta.width < 64 || meta.height < 64 || meta.width > 2000 || meta.height > 2000)
     throw new AppError("Tipe atau dimensi stiker tidak valid.", 422, "INVALID_STICKER");
-  return sharp(input).rotate().resize(64, 64, { fit: "contain", withoutEnlargement: true }).png().toBuffer();
+  return sharp(input).rotate().resize(sticker.size, sticker.size, {
+    fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 },
+  }).png().toBuffer();
 }
 
 async function renderSuppliedTemplate(officialPng: Buffer, design: QrisDesign, expectedDigest: string) {
@@ -178,31 +178,55 @@ async function renderSuppliedTemplate(officialPng: Buffer, design: QrisDesign, e
   const templateInfo = await sharp(template).metadata();
   if (templateInfo.format !== "png" || templateInfo.width !== width || templateInfo.height !== height || !templateInfo.hasAlpha)
     throw new AppError("Berkas template tidak sesuai ukuran atau format yang diperlukan.", 500, "TEMPLATE_INVALID");
-  const qr = await sharp(officialPng).resize(zone.qr.width - 32, zone.qr.height - 32, {
-    fit: "inside", withoutEnlargement: true, kernel: "nearest",
+  const scaledWidth = Math.round(zone.qr.width * design.qrZoom);
+  const scaledHeight = Math.round(zone.qr.height * design.qrZoom);
+  const scaledQr = await sharp(officialPng).resize(scaledWidth, scaledHeight, {
+    fit: "contain", background: "#ffffff", kernel: "nearest",
   }).png().toBuffer();
-  const qrInfo = await sharp(qr).metadata();
-  const qrLeft = zone.qr.x + Math.floor((zone.qr.width - (qrInfo.width ?? 0)) / 2);
-  const qrTop = zone.qr.y + Math.floor((zone.qr.height - (qrInfo.height ?? 0)) / 2);
+  const qr = design.qrZoom >= 1
+    ? await sharp(scaledQr).extract({
+        left: Math.round((scaledWidth - zone.qr.width) * (design.qrPanX + 1) / 2),
+        top: Math.round((scaledHeight - zone.qr.height) * (design.qrPanY + 1) / 2),
+        width: zone.qr.width,
+        height: zone.qr.height,
+      }).png().toBuffer()
+    : await sharp({ create: { width: zone.qr.width, height: zone.qr.height, channels: 4, background: "#ffffff" } })
+        .composite([{ input: scaledQr,
+          left: Math.round((zone.qr.width - scaledWidth) * (design.qrPanX + 1) / 2),
+          top: Math.round((zone.qr.height - scaledHeight) * (design.qrPanY + 1) / 2),
+        }]).png().toBuffer();
   const bottom = zone.bottom;
-  const sticker = await prepareSticker(design);
-  const stickerSize = 64;
-  const stickerTop = bottom.y + Math.round((bottom.height - stickerSize) * design.stickerY);
-  const stickerLeft = design.stickerSide === "LEFT" ? bottom.x + 13 : bottom.x + bottom.width - stickerSize - 13;
+  const placements: PlacedSticker[] = design.stickers.length
+    ? design.stickers
+    : design.sticker === "NONE" ? [] : [{
+        id: "00000000-0000-0000-0000-000000000000",
+        kind: design.sticker,
+        dataUrl: design.stickerDataUrl,
+        x: design.stickerX,
+        y: design.stickerY,
+        size: design.stickerSize,
+      }];
+  const stickerImages = await Promise.all(placements.map((item) => prepareSticker(item)));
   const words = (design.bottomText || design.businessName).trim();
   const preferredSplit = words.lastIndexOf(" ", Math.ceil(words.length / 2));
   const splitAt = words.length > 34 ? (preferredSplit >= words.length - 40 ? preferredSplit : Math.ceil(words.length / 2)) : words.length;
   const lines = splitAt < words.length ? [words.slice(0, splitAt), words.slice(splitAt).trim()] : [words];
   const longest = Math.max(...lines.map((line) => line.length), 1);
-  const fontSize = Math.max(17, Math.min(35, Math.floor((bottom.width - 180) / (longest * .6))));
+  const fontSize = Math.max(18, Math.min(design.bottomFontSize, lines.length > 1 ? 31 : 40, Math.floor((bottom.width - 180) / (longest * .6))));
+  const fontFamily = design.bottomFont === "CLASSIC" || design.bottomFont === "SCRIPT" ? "Georgia,DejaVu Serif,serif" : design.bottomFont === "RETRO" ? "Courier New,DejaVu Sans Mono,monospace" : "Arial,DejaVu Sans,sans-serif";
   const firstY = bottom.y + bottom.height / 2 + (lines.length === 1 ? fontSize * .34 : -3);
-  const textSvg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><text x="${bottom.x + bottom.width / 2}" y="${firstY}" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="#092c4a">${lines.map((line, index) => `<tspan x="${bottom.x + bottom.width / 2}" dy="${index ? fontSize * 1.1 : 0}">${escapeXml(line)}</tspan>`).join("")}</text></svg>`);
-  const png = await sharp({ create: { width, height, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } } })
+  const textSvg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><text x="${bottom.x + bottom.width / 2}" y="${firstY}" text-anchor="middle" font-family="${fontFamily}" font-size="${fontSize}" font-style="${design.bottomFont === "SCRIPT" ? "italic" : "normal"}" font-weight="${design.bottomFontWeight === "BOLD" ? 700 : 400}" fill="${design.bottomColor}">${lines.map((line, index) => `<tspan x="${bottom.x + bottom.width / 2}" dy="${index ? fontSize * 1.1 : 0}">${escapeXml(line)}</tspan>`).join("")}</text></svg>`);
+  const png = await sharp({ create: { width, height, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } } })
     .composite([
-      { input: qr, left: qrLeft, top: qrTop },
+      // QR selalu dikomposit lebih dulu. PNG template berada di atasnya.
+      { input: qr, left: zone.qr.x, top: zone.qr.y },
       { input: template, left: 0, top: 0 },
       { input: textSvg, left: 0, top: 0 },
-      ...(sticker ? [{ input: sticker, left: stickerLeft, top: stickerTop }] : []),
+      ...stickerImages.map((input, index) => ({
+        input,
+        left: bottom.x + 8 + Math.round((bottom.width - 16 - placements[index].size) * placements[index].x),
+        top: bottom.y + 8 + Math.round((bottom.height - 16 - placements[index].size) * placements[index].y),
+      })),
     ])
     .png().toBuffer();
   const decoded = await decodeQris(png);

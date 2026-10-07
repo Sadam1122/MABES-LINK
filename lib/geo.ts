@@ -17,6 +17,12 @@ export function googleMapsLocationUrl({ latitude, longitude }: Coordinate) {
   return url.toString();
 }
 
+export function googleMapsAddressSearchUrl(query: string) {
+  const url = new URL("https://www.google.com/maps/search/");
+  url.search = new URLSearchParams({ api: "1", query: query.trim() }).toString();
+  return url.toString();
+}
+
 export function googleMapsNavigationUrl({ latitude, longitude }: Coordinate) {
   assertCoordinate(latitude, longitude);
   const url = new URL("https://www.google.com/maps/dir/");

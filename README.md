@@ -1,10 +1,116 @@
 # MABES LINK
 
+> **Status saat ini, 7 Oktober 2026:** atas konfirmasi pengguna, hanya **42
+> record Mapping lama** pada database lokal yang diganti dengan 117 lokasi dari
+> `MABES_LINK_Mapping_Mangga_Besar_2026-10-07.xlsx`. Dua akun dan record
+> autentikasinya tetap ada; janji, kasus, dan data lain tidak di-reset. Backup
+> sebelum penggantian ada di
+> `.data/backups/before-replace-only-mapping-20261007-145332.dump`.
+> Semua koordinat workbook bertanda **belum diverifikasi di lapangan**.
+
 Aplikasi operasional internal KCP Mandiri Jakarta Mangga Besar (`11539`, `B.2`) untuk menghubungkan pekerjaan in-branch dan out-branch sampai layanan ditangani, diverifikasi, ditutup, dan penggunaan produk dicatat terpisah.
 
 Implementasi ini disiapkan untuk deployment internal, tetapi **belum dinyatakan production-ready** sebelum approval keamanan/infrastruktur, verifikasi proses CAKRA, uji backup/restore, dan uji SMTP organisasi selesai. Jangan deploy ke internet publik atau memasukkan data nyata bank ke lingkungan development/test.
 
 Halaman awal dan `/qris-custom` dapat dibuka tanpa login **pada host yang diizinkan**. Route internal, prospek, mapping, reminder, dan dashboard tetap memerlukan sesi serta pemeriksaan role/cabang di server. Compose production mengikat web ke loopback `127.0.0.1:3000`; akses pengguna memerlukan reverse proxy HTTPS internal dan persetujuan keamanan sebelum diaktifkan.
+
+## Beranda, banner, dan Mapping workbook 2026
+
+Beranda memakai `public/Gambar/logo.png`; logo login dapat diklik untuk kembali ke
+beranda, sedangkan logo dalam area kerja menuju dashboard. Footer memakai aset
+Mandiri, Livin', Kopra, Livin' Merchant, dan Danantara yang tersedia. Alamat
+cabang ditampilkan bersama peta interaktif dan tautan Google Maps. Untuk iframe
+Google, isi **salah satu**: `GOOGLE_MAPS_EMBED_URL` dengan nilai `src` dari Google
+Maps → Bagikan → Sematkan peta (URL `https://www.google.com/maps/embed?pb=…`, bukan
+HTML iframe), atau `GOOGLE_MAPS_EMBED_KEY` untuk Maps Embed API. URL sematan yang
+valid diprioritaskan. Tambahkan ke `.env.local` saat lokal, atau env file web saat
+deployment internal, lalu restart web. Jangan menebak key atau memakai key milik
+situs lain. Tanpa keduanya, tampil **Leaflet/OpenStreetMap** dengan titik cabang,
+bukan Google Maps; tautan rating/ulasan tetap menuju listing Google. Angka rating
+tidak disalin/dikarang dan tidak ada scraping/review API.
+Embed API memerlukan key, billing, dan pembatasan HTTP referrer
+menurut [dokumentasi Google](https://developers.google.com/maps/documentation/embed/quickstart).
+Jangan memasukkan data prospek ke URL peta publik.
+
+Pembaruan UI: peta Mapping lebih lebar (panel daftar desktop 290–310 px), tinggi
+peta responsif 480–760 px, tombol **Perbesar peta** menyembunyikan daftar sementara,
+dan daftar mempunyai scroll sendiri. Peta berpusat pada penanda logo Mandiri;
+**Fokus cabang**, **Fokus Mangga Besar**, dan **Fokus hasil filter** berbeda fungsi.
+Titik cabang `-6.1471567,106.8235563` bersumber dari
+[direktori publik Lokasari](https://id.near-place.com/bank-mandiri-komp-thr-lokasari-blok-b-no-1-2-3-4-5-7-jl-mangga-besar-raya-no-81-tangki-tamansari-rt6rw2-tangki)
+dan masih membutuhkan konfirmasi pengelola. Batas administratif tetap terpisah.
+Heatmap memakai pane Leaflet, redraw saat geser/resize, warna bergradasi, dan
+tidak menutupi popup. Home memakai animasi scroll satu kali, menghormati reduced
+motion, dan carousel informasi dengan tombol jeda/prev/next serta pilihan kelompok
+produk: Livin’, Kopra, Livin’ Merchant, simpanan, pinjaman, kartu, investasi, asuransi,
+bisnis dan Prioritas. Pita kuning besar memenuhi latar banner dengan opacity 10%,
+di belakang teks dan kontrol. Tombol **Jelajahi seluruh produk Mandiri** menuju
+katalog/sitemap resmi; aplikasi tidak mengklaim menyalin seluruh katalog atau
+memberi diskon/persetujuan otomatis untuk semua produk. Banner HUT ke-28
+hanya muncul selama Oktober 2026 dan menautkan
+[kanal resmi Mandiri](https://www.bankmandiri.co.id/en/hut-mandiri-28);
+tidak ada klaim besaran diskon atau materi eksternal yang diunduh otomatis.
+**Perubahan UI ini belum diuji/build ulang atas permintaan pengguna**; hasil tes
+workbook sebelumnya tidak membuktikan perubahan UI terbaru. Tidak ada perubahan
+database, akun, maupun penugasan pada pembaruan ini.
+
+Petugas login cabang 11539 dapat mengunggah banner promosi berjudul melalui
+dashboard. Panduan ukuran: **1600×600 px**, landscape rasio 1,6:1–4:1, minimal
+800×280 px, JPEG/PNG/WebP hingga 5 MB, maksimal 6 banner aktif. Gambar didekode,
+di-resize/re-encode WebP tanpa metadata EXIF, disimpan pada
+`PRIVATE_STORAGE_PATH/home-banners`, dan disajikan lewat endpoint gambar publik
+karena banner memang materi beranda publik. Unggahan/penghapusan diaudit; pembuat,
+SUPERVISOR, atau ADMIN boleh menghapus sesuai izin. Gunakan materi yang sudah
+disetujui organisasi, tanpa identitas nasabah atau promosi yang belum disahkan.
+Volume storage harus persisten dan dibagi web–worker. Backup database saja tidak
+memulihkan file banner; backup volume privat juga diperlukan.
+
+Workbook baru memakai 14 kolom `Mapping` yang sudah didukung aplikasi. Parser
+sekarang dapat membaca SpreadsheetML berprefiks `x:` dengan normalisasi sementara
+di memori; file sumber tidak diubah. Sheet `Mapping` saja yang menjadi record
+prospek. Sheet kontak publik, omzet, dan CIF **tidak** masuk database Mapping.
+Kode internal dari workbook dipertahankan. Koordinat dari workbook tampil sebagai
+pin dengan label `WORKBOOK_UNVERIFIED` sampai petugas memeriksa lokasi; catatan
+pendamping workbook menyebut banyak titik belum dicocokkan ke pin Google Maps.
+Produk/kebutuhan pada workbook tetap petunjuk awal, bukan kebutuhan terkonfirmasi
+atau penggunaan terverifikasi. Ada 35 nama yang cocok dengan 42 lokasi lama,
+namun kode internal berbeda; seed baru menolak impor ganda begitu saja.
+
+Seeder lama khusus workbook 42 baris telah dihapus dari package scripts. Seeder
+baru hanya menerima workbook dengan SHA-256 yang sudah diperiksa, tepat 117 baris,
+database lokal `mabeslink`, dan PIC aktif yang cocok. Ia **tidak membuat atau
+mengubah akun**, tidak mengirim email, dan idempotent setelah berhasil. Mode
+penggantian 42 lokasi lama menolak record yang telah berubah atau memiliki
+visit, follow-up, handover, kasus, foto, peluang, maupun verifikasi penggunaan.
+Mode penggantian lama telah dijalankan satu kali setelah backup diverifikasi.
+Jangan gunakan reset penuh untuk mengulangnya. File workbook berasal dari
+pengguna dan tidak disalin ke source code atau database testing.
+
+```powershell
+docker compose up -d postgres
+npm ci
+npm run db:deploy
+npm run db:generate
+npm run mapping:workbook-check
+npm run mapping:seed-preview   # tidak menulis database
+npm run dev                    # web + worker
+```
+
+`mapping:seed-replace-prior` sudah berhasil mengganti 42 lokasi lama secara
+transaksional. `npm run mapping:seed-verify` memeriksa 117 kode, 117 discovery,
+label sumber koordinat, dan visibilitas OUTBRANCH. Pratinjau ulang mengenali
+seed yang sama dan tidak membuat duplikat. `mapping:seed-commit` hanya untuk
+instalasi lokal yang belum punya prospek; jangan menjalankan reset database.
+
+Google Maps URL untuk lokasi/navigasi bekerja tanpa API key. Iframe Google Maps
+di beranda memerlukan `GOOGLE_MAPS_EMBED_KEY` yang valid; key tidak ada pada
+konfigurasi lokal, sehingga `.env.local` tidak diisi dengan nilai tebakan.
+Jika organisasi menyediakan key yang mengaktifkan Maps Embed API dengan billing
+dan pembatasan referrer, isi `GOOGLE_MAPS_EMBED_KEY="..."` di `.env.local` atau
+environment server internal. Key Embed terlihat pada URL iframe; jangan
+memakainya sebagai rahasia tak-terungkap. Tanpa key, tombol Google Maps dan
+peta Leaflet/OpenStreetMap internal tetap tersedia. `LOCATION_SEARCH_URL`
+terpisah dan hanya untuk provider pencarian alamat yang diizinkan.
 
 ## Batas fungsi
 
@@ -13,12 +119,16 @@ Halaman awal dan `/qris-custom` dapat dibuka tanpa login **pada host yang diizin
 - Status janji `NEEDS_SCHEDULING` tidak dianggap sebagai janji terkonfirmasi. Email hanya mengingatkan PIC internal untuk membuat atau mengonfirmasi janji; aplikasi tidak mengirim undangan otomatis kepada calon nasabah.
 - Penyelesaian layanan tidak otomatis menjadi `UsageVerification`.
 - OTP nomor lama, face recognition, blokir/aktivasi, dan pengecualian CSM/Livin tetap mengikuti prosedur resmi; tidak ada bypass.
-- Tidak ada integrasi/scraping CAKRA, Kopra, core banking, Google Maps, geocoding, AI berbayar, WhatsApp blast, atau keputusan kredit otomatis.
+- Tidak ada integrasi/scraping CAKRA, Kopra, core banking, geocoding Google, AI berbayar, WhatsApp blast, atau keputusan kredit otomatis. Google Maps URLs hanya membuka pencarian/navigasi; iframe Embed opsional memerlukan key resmi.
 - Audit non-duplikasi dan keputusan yang belum terverifikasi ada di [CAKRA_NON_DUPLICATION.md](./CAKRA_NON_DUPLICATION.md).
 
 ## QRIS Custom dan katalog akuisisi
 
-Pembaruan editor publik: pilihan desain kini **Batik Nusantara** dan **Alam Indonesia** dari PNG asli di `public/qris-template/` (1064x1478 px). Logo dan bingkai template tidak diubah; QR resmi hanya ditempatkan di ruang tengah transparan, sedangkan tulisan dan satu stiker opsional hanya boleh berada pada panel bawah. Stiker dapat dipilih, diseret di desktop, atau diunggah (JPG/PNG/WebP 64-2000 px per sisi, maksimal 320 KB). Server memvalidasi, mengecilkan dan menghapus metadata stiker. Pratinjau memakai render yang sama dengan unduhan PNG. Istilah promosi adalah **bingkai/desain QRIS gratis**, bukan benda cetak gratis. Paragraf di bawah tentang template SVG lama berlaku untuk renderer kompatibilitas lama, bukan pilihan publik saat ini.
+Editor publik memakai dua PNG asli di `public/qris-template/`: **Batik Nusantara** dan **Alam Indonesia** (1064x1478 px). QR resmi dikomposit di **belakang** template, dengan zoom 70-140% dan geser yang dibatasi ruang tengah; hasil harus lolos pemeriksaan scan. Tulisan bawah dapat diatur gaya huruf, ukuran, ketebalan, dan warnanya. Ada 20 stiker vektor, maksimal 3 stiker per desain yang dapat diseret di panel bawah, serta unggah JPG/PNG/WebP sendiri (64-2000 px per sisi, maksimal 320 KB per stiker). Server memvalidasi, mengecilkan dan menghapus metadata stiker. Pratinjau memakai render yang sama dengan unduhan PNG. Istilah promosi adalah **bingkai/desain QRIS gratis**, bukan benda cetak gratis. Paragraf di bawah tentang template SVG lama berlaku untuk renderer kompatibilitas, bukan pilihan publik saat ini.
+
+Menu **Pendaftar QRIS** tersedia untuk ADMIN (seluruh cabang) dan OUTBRANCH (cabang sendiri) setelah login. Hanya data pendaftar yang menyetujui untuk dihubungi masuk daftar; template terakhir yang berhasil dipratinjau disimpan ke `Prospect` existing. Jalankan migrasi non-destruktif `npx prisma migrate deploy` sebelum web/worker memakai versi ini.
+
+Jika log menampilkan `Unknown argument publicRequestId`, proses web masih memakai Prisma Client lama. Hentikan proses web/worker (`Ctrl+C`) dan jalankan ulang `npm run dev`. Perintah dev sekarang menjalankan `prisma migrate deploy` dan `prisma generate` sebelum memulai keduanya. Refresh browser saja tidak mengganti client yang sudah dimuat di proses Node. Jangan menghapus database atau folder data untuk memperbaikinya.
 
 - `/work` memakai katalog 9 kategori produk/layanan dengan pilihan bertingkat dan pencarian produk. Status akuisisi, target/realisasi beserta satuan, PIC, jadwal, next action, CIF/nomor rekening/HP opsional disimpan pada `ServiceCase` existing; data sensitif opsional hanya terlihat pada halaman internal yang berwenang. Label katalog perlu validasi pemilik produk sebelum dipakai untuk data nyata.
 - `/qris-custom` beralur informasi usaha → unggah QRIS resmi → pilih template → kustomisasi → validasi/unduh. Ini editor tampilan, **bukan** penerbitan atau verifikasi resmi QRIS/merchant. Pengguna harus memakai QRIS yang diterbitkan melalui proses resmi dan menguji scan sebelum cetak.
@@ -31,6 +141,14 @@ Pembaruan editor publik: pilihan desain kini **Batik Nusantara** dan **Alam Indo
 ## Stack
 
 Next.js App Router 16.3.8, React 19.2.8, TypeScript 5, Tailwind CSS 4, Route Handlers Node.js, PostgreSQL 16, Prisma 7.10.0, Better Auth 1.7.7, Zod 4.6.5, Leaflet 1.9.4, Nodemailer 10.0.13, Sharp 0.35.5, dan Vitest 5.0.3. Lockfile npm disertakan.
+
+## Excel untuk Mapping
+
+Di `/mapping`, tombol **Template Excel**, **Ekspor Excel**, dan **Impor Excel** tersedia setelah login. Template XLSX memiliki sheet `Mapping`, `Petunjuk`, `Contoh`, dan `Pilihan Ikon`. Sheet `Contoh` berisi satu usaha samaran yang sudah diisi; **hanya sheet `Mapping` yang dibaca saat impor**. Header hijau berarti wajib, biru opsional, dan kuning kondisional. Untuk lokasi baru, `nama_usaha` selalu wajib. Latitude dan longitude opsional, tetapi harus diisi berpasangan bila diketahui; tanpa keduanya lokasi masuk daftar mapping tanpa pin dan bisa diberi koordinat nanti. Kode cabang otomatis dari akun non-ADMIN; PIC otomatis akun pengimpor jika berada pada cabang lokasi. ADMIN lintas cabang harus mengisi kode cabang dan email PIC aktif. Kolom lain seperti label, area/blok, sektor, petunjuk, kebutuhan produk (pisahkan dengan `;`), kebutuhan, dan ikon opsional. Sheet `Pilihan Ikon` memberi kode, nama, dan contoh visual untuk 26 ikon; contoh visual membantu memilih, bukan bentuk persis marker aplikasi. Koordinat `0,0` valid, tetapi jangan memakainya sebagai pengganti lokasi yang belum diketahui.
+
+Untuk memperbarui lokasi existing, mulai dari **Ekspor Excel** lalu pertahankan `kode_internal` dan `versi` dari baris tersebut. Kolom opsional kosong pada update mempertahankan nilai lama; koordinat boleh dibiarkan kosong untuk mempertahankan titik lama. PIC existing tidak dapat diganti melalui Excel agar follow-up/penugasan terkait tidak terpisah; gunakan alur penugasan aplikasi. Impor pertama-tama menampilkan pratinjau tambah/perbarui, kesalahan bernomor baris, dan penanda otomatis jika titik di luar referensi batas Mangga Besar (bukan penetapan wilayah kerja). Seluruh file disimpan atomik hanya setelah konfirmasi. Baris duplikat, versi kedaluwarsa, PIC/cabang di luar akses, formula, hyperlink, koordinat invalid, dan template yang berubah ditolak. Batas impor 250 baris/1,5 MB per file. Ekspor mencakup seluruh data mapping dalam cakupan role/cabang hingga 5.000 record; halaman peta menampilkan 1.000 record terbaru dan menyatakan totalnya. Ekspor diaudit.
+
+Lokasi baru dari Excel dibuat pada `Prospect` existing dengan penanda impor, **tanpa `UsageVerification`**. Ini bukan bukti produk Mandiri telah dipakai. Penggunaan harus tetap diverifikasi lewat alur resmi. File XLSX tidak disimpan di server setelah request; hanya record lokasi yang lolos validasi tersimpan. Jangan memasukkan CIF, nomor rekening/telepon, saldo, dokumen, atau informasi rahasia ke spreadsheet. Terapkan kontrol akses perangkat dan kebijakan penyimpanan file ekspor organisasi. Deployment perlu menerapkan migration `20261006160000_mapping_excel_import` dengan `npm run db:deploy` sebelum web/worker versi baru dimulai.
 
 ## Menjalankan lokal
 
@@ -120,11 +238,15 @@ Untuk Brevo, ambil SMTP key milik akun pengguna dari dashboard **SMTP & API**, l
 
 ## Peta, koordinat, dan foto privat
 
+- Favicon `app/favicon.ico` dan ikon PNG dibuat dari bentuk monogram MABES LINK oleh `npx tsx scripts/make-favicon.ts`; keduanya sudah masuk repo sehingga perintah ini hanya diperlukan bila desain ikon diubah.
+- QRIS Custom memiliki pencarian nama tempat/alamat publik melalui `GET /api/location-search` dengan `LOCATION_SEARCH_URL` server-only. Pencarian otomatis menunggu 500 ms setelah ketikan berhenti; permintaan lama dibatalkan. Isi URL endpoint **Photon-compatible yang di-host sendiri atau secara eksplisit diizinkan organisasi** (misalnya `https://geocoder.internal.example/api`). Default kosong: pencarian internal menjelaskan bahwa penyedia belum tersedia; tombol Google Maps membuka pencarian terpisah, dan pin/koordinat manual tetap berfungsi. Jangan isi URL demo Photon atau Nominatim publik untuk aplikasi operasional: lihat [Nominatim Usage Policy](https://operations.osmfoundation.org/policies/nominatim/) dan [Photon API](https://github.com/komoot/photon/blob/master/docs/api-v1.md). Jangan masukkan identitas/nomor pribadi dalam kueri. Tidak ada API key Google Maps atau scraping; hasil tempat baru tersimpan setelah dipilih pengguna.
+- Mapping menyediakan mode **Penanda** dan **Heatmap** (semua titik, penggunaan terverifikasi, atau perlu tindakan). Heatmap dihitung lokal dari titik yang sudah lolos filter dan izin halaman, tanpa mengirim data tambahan ke provider peta. Halaman saat ini memuat maksimal 1.000 lokasi terbaru; kepadatan bukan gambaran seluruh cabang, skor kredit, atau perkiraan potensi dana.
+
 - Leaflet memakai tile URL/atribusi yang dapat dikonfigurasi. Ikuti [OpenStreetMap Tile Usage Policy](https://operations.osmfoundation.org/policies/tiles/), jangan bulk download, dan gunakan provider yang diizinkan organisasi.
 - Overlay interaktif memakai referensi batas Kelurahan Mangga Besar dari [FeatureServer GIS Pemprov DKI](https://gis-dpmptsp.jakarta.go.id/arcgis/rest/services/Hosted/Batas_Administrasi_Kelurahan_DKI_Jakarta/FeatureServer/85), disederhanakan ke WGS84. Garis ini untuk filter/fokus peta dan bukan penetapan wilayah kerja cabang.
 - Koordinat disimpan sebagai `numeric(10,7)`, wajib berpasangan, dan `0` valid. Sumber (`MAP_PIN`, `MANUAL_COORDINATES`, atau `DEVICE_GEOLOCATION`) serta waktu pencatatan disimpan pada record prospek yang sama. Posisi perangkat hanya sementara; [browser geolocation](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation/getCurrentPosition) memerlukan secure context/izin dan tidak membentuk riwayat GPS.
-- Mapping menampilkan toko/usaha dengan `UsageVerification=VERIFIED` **serta** permintaan QRIS Custom yang memberi consent, dengan label berbeda agar permintaan tidak disalahartikan sebagai penggunaan. Semua akun login dapat menambah serta mengubah mapping dalam cabangnya; ADMIN dapat memilih PIC lintas cabang. Tombol **Tambah lokasi** untuk penggunaan terverifikasi membuat `Prospect` dan `UsageVerification` secara transaksional pada model existing, dengan referensi verifikasi internal dan audit. Marker memiliki ikon persisten toko/kuliner/belanja/kantor/kesehatan/jasa, palet warna yang dapat dipilih, ukuran yang dapat diskalakan, serta tombol **Fokus hasil filter**. Lokasi dapat dibuat/diubah/dikosongkan; foto dapat ditambah/diganti/dihapus.
-- **Mapping Janji** (`/appointment-map`) menampilkan sebaran janji sesuai cakupan role/cabang dengan filter pencarian, status, PIC, waktu, dan ukuran marker. Pencarian lokasi pada form hanya mencari titik yang sudah tersimpan dan diizinkan; tidak ada scraping Google Maps atau pengiriman identitas ke geocoder publik.
+- Mapping menampilkan prospek lokasi, permintaan QRIS Custom yang memberi consent, dan penggunaan `UsageVerification=VERIFIED` dengan label berbeda. Semua akun login dapat menambah mapping dalam cabangnya; ADMIN dapat memilih PIC lintas cabang. **Tambah lokasi** sekarang membuat `Prospect` dan `MappingDiscovery` pada model existing, dengan kebutuhan default **Belum dikonfirmasi**, koordinat opsional, dan **tanpa** otomatis membuat `UsageVerification`; verifikasi penggunaan tetap alur terpisah. Marker memiliki 26 ikon persisten, filter, palet warna, dan skala. Heatmap dihitung hanya dari titik terlihat, bukan skor kredit atau potensi dana. Lokasi dan foto privat dapat dikelola sesuai izin.
+- **Mapping Janji** (`/appointment-map`) menampilkan sebaran janji sesuai cakupan role/cabang dengan filter pencarian, status, PIC, waktu, dan ukuran marker. Modal **Buat janji** dapat memilih 26 ikon pada `Prospect.mappingMarkerIcon`; ikon tampil di peta janji dan tetap bisa diubah dari Mapping jika record memenuhi cakupan mapping. Pencarian produk/titik tersimpan memakai debounce 220/260 ms, label kolom tetap terlihat, dan API menampilkan kesalahan validasi per field (misalnya nomor HP), bukan hanya pesan umum. Pencarian lokasi pada form hanya mencari titik yang sudah tersimpan dan diizinkan; tidak ada scraping Google Maps atau pengiriman identitas ke geocoder publik.
 - Kartu akuisisi dapat dihapus oleh pembuat, supervisor cabang, atau ADMIN melalui konfirmasi. Implementasinya soft-delete: kartu disembunyikan, status/reminder dibatalkan, dan audit tetap dipertahankan.
 - [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started) location/direction hanya membawa koordinat dan tidak memakai API key. Jarak aplikasi adalah Haversine berlabel “Jarak garis lurus”, bukan jarak rute atau waktu tempuh.
 - Foto tempat opsional disimpan di `PRIVATE_STORAGE_PATH` pada volume persisten di luar webroot, mengikuti prinsip [OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html). Maksimum default tiga gambar, 5 MB/gambar, JPEG/PNG/WebP. Server memeriksa isi/decode/dimensi, re-encode WebP, menghapus metadata, memakai nama acak, dan melayani file melalui endpoint berotorisasi.
@@ -184,6 +306,25 @@ npm run test:roles
 ```
 
 Tes integrasi memerlukan PostgreSQL lokal yang sudah dimigrasi, membuat fixture terisolasi sendiri, lalu membersihkannya. Tidak memerlukan seed. Hasil aktual dan keterbatasan ada di [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
+
+## Discovery dan cross-selling Mapping
+
+Pada `/mapping`, pilih lokasi lalu buka **Discovery & peluang relevan**. Segmen 3P+1I, tag peluang, sumber/tanggal cek, produk yang sudah digunakan, dan screening GoFood/GrabFood dicatat terpisah dari penawaran. Semua data platform diisi manual. Ambang rating ≥4,5 dan ≥500 review, dengan pilihan satu/kedua platform dan masa data 30 hari, hanya **kriteria screening internal yang diminta pengguna**, bukan syarat/keputusan resmi Bank Mandiri. Foto lokasi opsional memakai storage privat existing. CIF, rekening, saldo, pasien, daftar gaji, dan dokumen tidak dimasukkan ke Mapping atau Excel.
+
+Daftar produk penawaran memakai kode teknis yang didukung sumber publik, tetapi **otorisasi internal belum tersedia di repo**. Secara default `MAPPING_APPROVED_PRODUCT_CODES=""`, sehingga hanya discovery yang aktif; sesudah pemilik proses menyetujui katalog, set kode yang diizinkan pada environment server, misalnya satu kode untuk pilot. Kode yang tersedia: `LIVIN_MERCHANT_QRIS`, `LIVIN_MERCHANT_EDC`, `KOPRA_CASH_MANAGEMENT`, `LIVIN_ACCOUNT_OPENING`. Nama publik rujukan: [Livin’ Merchant](https://www.bankmandiri.co.id/en/livin-merchant/metode-pembayaran), [Kopra Cash Management](https://www.bankmandiri.co.id/in/cash-management1), [aktivasi Livin’](https://www.bankmandiri.co.id/en/livin/edukasi/cara-daftar-dan-aktivasi). Ini **bukan** bukti izin penawaran internal. `Livin’ Food` dipakai hanya sebagai tag screening dan belum diverifikasi sebagai nama/aturan produk resmi.
+
+Respons **Minta follow-up** memerlukan izin, next action, dueAt WIB, dan PIC. Penyimpanan membuat `FollowUp` existing serta job reminder PostgreSQL; respons **Tidak tertarik/Tidak relevan** adalah hasil sah dan membatalkan reminder aktif. Perubahan PIC/jadwal menaikkan versi job sehingga worker tidak mengirim reminder lama. Penggunaan produk tetap dicatat terpisah; tidak ada persetujuan kredit, integrasi CAKRA, atau scraping platform.
+
+Workbook 42 baris `link_mapping_6_Oktober_2026_REVISI.xlsx` adalah sumber historis
+yang **sudah diganti**, bukan isi database lokal saat ini. Seeder CLI khusus workbook itu telah dihapus. Untuk
+workbook 117 baris yang baru, gunakan pemeriksaan dan seeder baru di bagian awal
+README. Format impor/ekspor UI tetap 14 kolom. Impor melalui UI tetap memerlukan
+login, pratinjau, dan konfirmasi; koordinat Excel bertanda belum diverifikasi.
+Jangan mengisi `0,0` sebagai pengganti lokasi yang belum diketahui.
+
+Google Maps URLs membuka pencarian tempat lewat klik petugas tanpa API key, tetapi **tidak mengembalikan koordinat ke MABES LINK**. [Dokumentasi Maps URLs](https://developers.google.com/maps/documentation/urls/get-started) membedakannya dari [Geocoding API](https://developers.google.com/maps/documentation/geocoding/usage-and-billing), yang memerlukan billing dan kredensial. Tidak ada scraping Google Maps. `LOCATION_SEARCH_URL` opsional memakai provider Photon-compatible milik organisasi/yang diizinkan; hasilnya tetap kandidat dan tidak otomatis disimpan. Workbook **baru** berisi 117 pasangan koordinat yang bersumber dari workbook, bukan hasil verifikasi otomatis Google Maps; seluruhnya tetap ditandai perlu pemeriksaan. Data kosong tidak diisi dengan tebakan atau klaim relasi nasabah.
+
+Beranda publik `/` sekarang memakai aset logo Mandiri, Livin', Kopra, Livin' Merchant, Danantara Indonesia, mockup QRIS yang disediakan, pilihan template, FAQ, dan footer responsif. Mockup berisi QR contoh yang tidak boleh digunakan untuk pembayaran; penawaran gratis hanya desain/bingkai digital, bukan akrilik/material cetak. Pengguna yang sudah login tetap menuju dashboard operasional, yang juga menampilkan promosi QRIS ringkas.
 
 `test:qris-visual` memerlukan `npm run start:test` pada terminal lain serta database `mabeslink_test` yang telah menerima migration. Tes memakai QR samaran dan **tidak** menciptakan prospek karena consent kontak dimatikan. `scripts/qris-api-smoke.ts` dapat dijalankan terhadap server testing yang sama dengan `DATABASE_PURPOSE=testing`; script membuat lalu menghapus sesi QR uji dan memeriksa respons PNG/PDF lewat HTTP.
 
