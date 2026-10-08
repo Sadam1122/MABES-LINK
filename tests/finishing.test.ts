@@ -68,7 +68,7 @@ describe("pengaturan suara", () => {
       shouldCatchUpAppointmentSound(
         "APPOINTMENT_ACTION_DUE",
         null,
-        "2026-10-05T01:50:00.000Z",
+        "2026-10-05T01:59:00.000Z",
         now,
       ),
     ).toBe(true);

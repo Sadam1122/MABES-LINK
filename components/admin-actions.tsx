@@ -232,11 +232,12 @@ export function NotificationConfigForm({
         <h2 className="font-black">Jadwal reminder</h2>
         <p className="text-sm text-slate-500">
           Jadwal lokal aplikasi, bukan penetapan SOP bank. Zona waktu
-          Asia/Jakarta.
+          Asia/Jakarta. Isian menit di bawah hanya untuk follow-up umum;
+          janji terkonfirmasi memakai 24 jam dan 15 menit/1 jam sesuai jarak.
         </p>
       </div>
       <label className="label">
-        Menit sebelum jatuh tempo
+        Follow-up umum: menit sebelum jatuh tempo
         <input
           className="field mt-1"
           name="reminderMinutesBefore"

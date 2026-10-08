@@ -1,5 +1,59 @@
 # MABES LINK
 
+> **Alarm waktu janji:** pengingat sebelum janji dan alarm saat waktu janji tiba
+> sama-sama membuka modal dan suara sesuai aktivasi/mute/volume browser.
+> Ingatkan lagi 1/5/10 menit membuat alarm baru melalui worker; untuk alarm saat
+> janji, snooze dibatasi sampai 1 jam setelah jadwal. Extend waktu janji membatalkan
+> versi lama dan menjadwalkan ulang. Restart web dan worker setelah pembaruan;
+> worker menambahkan alarm T0 mendatang ke janji existing tanpa mengubah akun/data.
+> Tick worker default 60 detik + SSE 2 detik, bukan jaminan bunyi tepat di detik nol.
+
+> **Countdown kartu & suara khusus alarm:** kartu di Akuisisi Nasabah menunjukkan
+> Alarm berikutnya dan Menuju janji dari jadwal PostgreSQL. Terima pekerjaan lebih
+> dahulu untuk mengaktifkan pengingat. Simpan/edit/hapus dan perubahan lain hanya
+> menampilkan notifikasi visual, tanpa suara, termasuk pada perangkat dengan
+> preferensi lama. Suara otomatis hanya saat modal Alarm janji muncul.
+> Countdown bukan pemicu audio; worker harus berjalan dan browser tetap perlu
+> aktivasi suara. Detail hasil terbaru di IMPLEMENTATION_STATUS.md.
+
+> **Pembaruan terbaru, 8 Oktober 2026:** modal **Alarm janji** berisi detail jadwal,
+> **Matikan alarm** dan **Ingatkan lagi 1/5/10 menit**. Snooze tersimpan PostgreSQL
+> dan diproses worker; berlaku per penerima, termasuk semua pendamping terpilih.
+> Satu sumber audio berulang maksimal 2 menit, mengikuti mute/volume, tidak ganda
+> antar-tab. Aktivasi browser tetap memerlukan interaksi. **Product Holding** di
+> Mapping memakai checklist 38 produk/kanal dan pencarian; penawaran tetap dibatasi
+> izin internal. Migration additive `20261008140000_alarm_snooze` tidak mereset data.
+> Jalankan `npm run db:deploy`, `npm run db:generate`, `npm run build`, lalu restart
+> web (`npm run start`) dan worker terpisah (`npm run worker`); untuk dev gunakan
+> `npm run dev`. Panduan: [Janji & pengingat](./docs/appointment-reminders.md).
+> Hasil terbaru: **104 tes lulus, 2 skip**, **72 pemeriksaan browser lulus**,
+> typecheck/lint/build lulus; [Guidebook terbaru, 33 halaman](./docs/MABES_LINK_Guidebook_2026-10-08.pdf).
+> Detail pembuktian dan batas browser/PDF di
+> [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
+
+> **Tracking janji, 8 Oktober 2026:** titik KCP diperbarui menjadi
+> `-6.14621,106.82421` sesuai konfirmasi pengelola. Konfigurasi lokal `.env`
+> sudah diisi tanpa mengaktifkan SMTP. Restart web **dan worker** agar nilai baru
+> digunakan. **Terima pekerjaan** mengonfirmasi waktu tercatat dan mengaktifkan
+> pengingat mendatang; countdown janji/alarm membaca job PostgreSQL, bukan
+> scheduler browser. Readiness layanan tidak ditampilkan pada detail janji
+> akuisisi. **Janji terlaksana** tidak mengubah layanan atau penggunaan produk.
+
+> **Pembaruan janji/pengingat 8 Oktober 2026:** gunakan satu **Waktu janji (WIB)**,
+> kendali otomatis pada pembuat, pendamping opsional, pengingat T−24 jam dan
+> T−15 menit/T−1 jam berdasarkan jarak terverifikasi. Aturan ini menggantikan
+> pengulangan T−30…T0 yang dijelaskan dalam catatan historis.
+> Panduan konfigurasi dan batas browser: [Janji & pengingat](./docs/appointment-reminders.md).
+> Hasil sebelum pembaruan modal/snooze: **79 tes regresi lulus, 2 skip** (workbook lama tidak tersedia),
+> **45 pemeriksaan browser lulus**, typecheck/lint/build lulus.
+
+> **Audit sebelumnya, 8 Oktober 2026:** build, typecheck, lint, 69 tes regresi, serta pemeriksaan
+> browser pada 360/390/768/1440 px telah dijalankan. Dua tes workbook lama dilewati
+> karena file sumber tidak tersedia. Hasil terbaru dan batas pembuktian ada di
+> [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md). Panduan dari screenshot
+> aktual: [Guidebook PDF](./docs/MABES_LINK_Guidebook_2026-10-08.pdf).
+> Audit ini tidak melakukan reset, impor ulang, atau perubahan akun operasional.
+
 > **Status saat ini, 7 Oktober 2026:** atas konfirmasi pengguna, hanya **42
 > record Mapping lama** pada database lokal yang diganti dengan 117 lokasi dari
 > `MABES_LINK_Mapping_Mangga_Besar_2026-10-07.xlsx`. Dua akun dan record
@@ -36,9 +90,8 @@ Pembaruan UI: peta Mapping lebih lebar (panel daftar desktop 290–310 px), ting
 peta responsif 480–760 px, tombol **Perbesar peta** menyembunyikan daftar sementara,
 dan daftar mempunyai scroll sendiri. Peta berpusat pada penanda logo Mandiri;
 **Fokus cabang**, **Fokus Mangga Besar**, dan **Fokus hasil filter** berbeda fungsi.
-Titik cabang `-6.1471567,106.8235563` bersumber dari
-[direktori publik Lokasari](https://id.near-place.com/bank-mandiri-komp-thr-lokasari-blok-b-no-1-2-3-4-5-7-jl-mangga-besar-raya-no-81-tangki-tamansari-rt6rw2-tangki)
-dan masih membutuhkan konfirmasi pengelola. Batas administratif tetap terpisah.
+Titik cabang `-6.14621,106.82421` sesuai konfirmasi pengelola aplikasi pada
+8 Oktober 2026, bukan klaim survei resmi bank. Batas administratif tetap terpisah.
 Heatmap memakai pane Leaflet, redraw saat geser/resize, warna bergradasi, dan
 tidak menutupi popup. Home memakai animasi scroll satu kali, menghormati reduced
 motion, dan carousel informasi dengan tombol jeda/prev/next serta pilihan kelompok
@@ -50,9 +103,9 @@ memberi diskon/persetujuan otomatis untuk semua produk. Banner HUT ke-28
 hanya muncul selama Oktober 2026 dan menautkan
 [kanal resmi Mandiri](https://www.bankmandiri.co.id/en/hut-mandiri-28);
 tidak ada klaim besaran diskon atau materi eksternal yang diunduh otomatis.
-**Perubahan UI ini belum diuji/build ulang atas permintaan pengguna**; hasil tes
-workbook sebelumnya tidak membuktikan perubahan UI terbaru. Tidak ada perubahan
-database, akun, maupun penugasan pada pembaruan ini.
+Perubahan UI ini sudah diperiksa ulang pada audit 8 Oktober 2026 menggunakan
+production build lokal dan data samaran. Tidak ada perubahan pada workbook,
+koordinat, akun, maupun penugasan operasional dalam audit tersebut.
 
 Petugas login cabang 11539 dapat mengunggah banner promosi berjudul melalui
 dashboard. Panduan ukuran: **1600×600 px**, landscape rasio 1,6:1–4:1, minimal
@@ -87,7 +140,7 @@ Jangan gunakan reset penuh untuk mengulangnya. File workbook berasal dari
 pengguna dan tidak disalin ke source code atau database testing.
 
 ```powershell
-docker compose up -d postgres
+npm run compose:db
 npm ci
 npm run db:deploy
 npm run db:generate
@@ -156,8 +209,9 @@ Prasyarat: Node.js 22+, npm 10+, dan Docker Desktop/Engine dengan Compose.
 
 ```powershell
 Copy-Item .env.example .env.local
-# Ganti BETTER_AUTH_SECRET dengan nilai acak minimal 32 karakter.
-docker compose up -d postgres
+# Instalasi baru saja: isi DATABASE_URL, POSTGRES_* dan secret auth valid.
+# Repo existing: jangan menimpa .env/.env.local atau membuat ulang akun.
+npm run compose:db
 npm ci
 npm run db:generate
 npm run db:deploy
@@ -172,6 +226,19 @@ npm run dev:all
 `npm install`/`npm ci` menjalankan `prisma generate` melalui `postinstall`, `npm run dev:web` mengulanginya sebelum Next.js berjalan, dan `npm run build` mengulanginya melalui `prebuild`. Ini mencegah development atau build memakai `@prisma/client` yang belum digenerate. Client Component tidak mengimpor runtime enum Prisma; validasi nilai tetap dilakukan kembali oleh Zod dan service server.
 
 `npm run dev` (alias `npm run dev:all`) menjalankan web dan worker sebagai proses terpisah agar pengingat tidak terlewat saat pengembangan. Untuk inspeksi web saja gunakan `npm run dev:web`; bila memilih mode itu, jalankan `npm run worker` pada terminal lain. Worker wajib selalu hidup agar reminder tetap berjalan saat browser ditutup.
+
+`compose:db`, `compose:check`, `compose:build`, dan `compose:up` membaca konfigurasi
+lokal existing tanpa mencetak/menulis secret. Helper hanya menerima DSN PostgreSQL
+loopback port 5434, mempertahankan volume database, dan menolak POSTGRES_* yang
+berbeda dari DSN. Compose memakai DSN terpisah `DATABASE_URL_DOCKER` dengan host
+`postgres:5432`; localhost di dalam container **bukan** database host.
+`npm run compose:up` menjalankan FE+BE dalam web Next.js/Route Handlers, migration
+one-shot, worker Node terpisah, serta database. Jangan menjalankannya saat port
+3000 sudah dipakai web lain. Tidak ada backend kedua atau pengganti backend oleh
+PostgreSQL. Hanya DB yang diperlukan untuk web/worker pada host: `compose:db`.
+Build/start tanpa Docker: `npm run build`, lalu `npm start` dan `npm run worker`
+pada dua terminal. `npm start` mengikat localhost; akses pengguna harus melalui
+reverse proxy HTTPS internal yang diizinkan.
 
 Halaman aplikasi menampilkan peringatan merah bila heartbeat worker tidak tersedia atau lebih lama dari 2,5 kali interval polling. Diagnosis satu janji tanpa menampilkan identitas nasabah:
 
@@ -203,7 +270,7 @@ Seeder membuat tepat empat akun domain `.test`, memakai hash Better Auth, dan me
 ```powershell
 Copy-Item .env.production.example .env.production
 # Isi seluruh rahasia, URL HTTPS internal, sender, dan konfigurasi yang disetujui.
-docker compose --env-file .env.production -f docker-compose.production.yml config
+docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
 docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
 ```
 
@@ -211,11 +278,23 @@ Compose menyediakan PostgreSQL tanpa port publik, migration one-shot, web dan wo
 
 Health web tersedia di `GET /api/health`; response membedakan database dan heartbeat worker. Health worker menggunakan `npm run worker:health`. Nilai `stale-or-not-started` berarti web/database hidup tetapi proses worker harus diperiksa.
 
+Variabel wajib: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`,
+`APP_URL`, `BETTER_AUTH_URL`, dan `BETTER_AUTH_SECRET` acak minimal 32 karakter.
+Untuk image lokal juga isi/derive `DATABASE_URL_DOCKER`. Password pada DSN harus
+URL-encoded. `PRIVATE_STORAGE_PATH` wajib volume persisten; web dan worker berbagi
+volume. SMTP default tetap nonaktif/dry-run; baru isi SMTP_HOST/PORT/USER/PASS/FROM
+dan batas kuota bila sudah disetujui. Konfigurasi `NEXT_PUBLIC_MAP_*` masuk saat
+**build**, bukan rahasia dan bukan konfigurasi runtime; build ulang bila berubah.
+Jangan memakai `docker compose down -v`, reset Prisma, atau mengganti nama volume
+database existing. Compose tidak memasang reverse proxy/TLS atau memverifikasi
+otorisasi organisasi secara otomatis. Akses SSH/jaringan, firewall, secret manager,
+retensi backup, monitoring worker dan alerting tetap tanggung jawab hosting internal.
+
 ## Worker, outbox, dan notifikasi
 
 - Tick scheduler default setiap 60 detik (`WORKER_POLL_INTERVAL_MS`).
 - Job persisten diklaim atomik dengan `FOR UPDATE SKIP LOCKED`, lease dua menit, dedup key unik, retry terbatas/backoff, dan recovery setelah restart.
-- Worker memeriksa kembali versi jadwal, PIC, status pekerjaan, dan status janji sebelum membuat notifikasi/email. Janji `CONFIRMED` tetap mempunyai reminder 30 menit sebelum dan saat waktu janji. Reschedule, reassign, selesai, atau batal membatalkan reminder versi lama; jadwal baru membuat job versi baru.
+- Worker memeriksa kembali versi jadwal, kendali/pendamping, status pekerjaan, kedaluwarsa pengingat, dan status janji sebelum notifikasi/email. Janji `CONFIRMED` mempunyai pengingat 24 jam sebelumnya, lalu 15 menit untuk jarak terverifikasi ≤1 km atau 1 jam untuk >1 km/lokasi belum terverifikasi, serta alarm T0 saat waktu janji tiba. Slot yang kedaluwarsa tidak dikejar. Reschedule, pengambilalihan, selesai, atau batal membatalkan versi lama; tidak ada pengulangan otomatis tiap 5 menit. Snooze eksplisit diproses sebagai job baru.
 - SMTP dilakukan di luar transaksi claim. Timeout/socket ambigu menjadi `UNKNOWN` dan tidak diretry otomatis; SMTP accepted bukan bukti pesan sampai inbox.
 - SSE `/api/notifications/stream` membaca PostgreSQL setiap dua detik secara default, memakai cursor/`Last-Event-ID`, dan hanya mengirim record penerima login/cabangnya. UI memiliki polling cadangan lima detik.
 
@@ -253,20 +332,21 @@ Untuk Brevo, ambil SMTP key milik akun pengguna dari dashboard **SMTP & API**, l
 
 ## Alarm perangkat
 
-Tombol lonceng membuka dropdown ringkas terlebih dahulu. Tombol **Lihat detail** pada sebuah item baru membuka modal detail; tersedia badge belum dibaca, status SSE/polling, tandai dibaca/semua dibaca, dan tautan internal. **Pengaturan Notifikasi** menyediakan **Aktifkan Suara**, **Tes Suara**, **Tes alarm waktu janji**, volume 0–100%, **Mute**, stop, pengulangan 1/3/5/10/20 kali, jenis reminder, dan aktivasi notifikasi sistem yang terpisah. Alarm tepat waktu janji memakai pola berbeda, lebih rapat, dan sedikitnya lima putaran; pengingat awal memakai pola normal. Pengguna dapat memilih file alarm MP3/WAV/OGG/M4A/WebM maksimal 5 MB dan 30 detik per putaran; file disimpan privat pada IndexedDB browser/perangkat tersebut, tidak dikirim ke server. Notifikasi baru juga memunculkan toast kecil di kanan atas. Saat aplikasi dibuka kembali, paling banyak satu alarm janji belum dibaca yang tersimpan dalam 15 menit terakhir dipulihkan setelah interaksi pengguna mengaktifkan audio; riwayat lama tidak dibunyikan ulang.
+Tombol lonceng membuka dropdown terlebih dahulu; **Lihat detail** membuka modal. Pengaturan menyediakan aktivasi suara, tes, volume 0–100%, mute dan izin notifikasi sistem yang terpisah. Setiap pengingat janji memainkan satu putaran saja. Pengulangan 1/3/5/10/20 hanya untuk pembaruan umum. Ringtone MP3/WAV/OGG/M4A/WebM maksimal 5 MB dan 30 detik tetap lokal di IndexedDB. Notifikasi baru memunculkan toast kanan atas. Klaim audio/pop-up atomik tersimpan di PostgreSQL per penerima, sehingga refresh/reconnect/tab lain tidak mengulangnya. Pengingat yang lewat toleransi 90 detik tidak dipulihkan atau dibunyikan terlambat.
 
 Prompt aktivasi audio tidak lagi muncul otomatis setelah login. Aktivasi dilakukan sadar dari **Pengaturan Notifikasi**: tombol hijau mengaktifkan suara dan tombol merah mematikannya. Penghapusan ringtone dan logout memakai dialog konfirmasi.
 
-Web Audio dibuat/resume dari klik pengguna dan preferensi disimpan per user/perangkat. Aktivasi dilakukan dari tombol pengaturan—tidak ada prompt paksa setelah login—dan browser tetap memberi keputusan akhir kepada pengguna. Setelah pernah diaktifkan, aplikasi mencoba mempersenjatai kembali audio pada interaksi pertama setelah reload. Reminder janji terkonfirmasi dibuat pada T−30, T−25, T−20, T−15, T−10, T−5, dan T0, memakai kategori suara **Janji dan tindak lanjut**, serta tetap berbunyi pada jam senyap. Default volume perangkat baru adalah 100%; pilihan volume pengguna dan volume sistem tetap dihormati. Perubahan janji, status pekerjaan, mapping lokasi, dan foto menghasilkan notifikasi persisten kepada PIC yang berwenang. Operasi baca tidak dibunyikan agar membuka halaman tidak menghasilkan spam.
+Web Audio dibuat/resume dari klik pengguna, bukan izin paksa. Setelah reload aplikasi mencoba mengaktifkan kembali suara pada interaksi pertama jika sebelumnya diaktifkan. Pengingat janji terkonfirmasi T−24 jam dan T−15 menit/T−1 jam memakai kategori **Janji dan tindak lanjut** dan tidak digeser quiet hours; mute, pilihan volume dan volume sistem tetap dihormati. Default volume baru 100%. Preferensi mute/volume tersinkron antar-tab. Membaca halaman tidak membuat notifikasi baru. Ini at-most-once attempt, bukan jaminan suara terdengar jika tab mati, browser tidur atau perangkat mute.
 
 Chrome dan Edge diuji langsung di Windows. Opera berbasis Chromium diharapkan memakai API standar yang sama tetapi tidak tersedia pada mesin pemeriksaan. Safari belum diuji langsung; iOS/iPadOS mempunyai persyaratan Home Screen khusus untuk Web Push background. Implementasi saat ini adalah SSE/Web Audio selama aplikasi terbuka, bukan Web Push background. Alarm hanya dijanjikan selama MABES LINK terbuka; saat browser tertutup, sumber pengingat tetap worker/outbox dan email internal jika SMTP aktif.
 
-Smoke alarm lokal menggunakan database testing, akun sementara yang dibersihkan otomatis, Edge terlihat, notifikasi persisten, dan SSE:
+Smoke alarm baru memakai database UI test terisolasi, akun sementara yang dibersihkan otomatis, Edge headless, worker terpisah, notifikasi persisten dan SSE. Ikuti konfigurasi lengkap [panduan janji](./docs/appointment-reminders.md); jangan menunjuk ke server/database operasional:
 
 ```powershell
 npm run build
+$env:TEST_DATABASE_NAME='mabeslink_ui_test_20261008'
 npm run start:test
-# terminal lain; speaker laptop harus aktif
+# terminal lain, TEST_DATABASE_NAME sama dan server uji sudah dikonfigurasi:
 npm run smoke:test-alarm
 ```
 
@@ -306,6 +386,64 @@ npm run test:roles
 ```
 
 Tes integrasi memerlukan PostgreSQL lokal yang sudah dimigrasi, membuat fixture terisolasi sendiri, lalu membersihkannya. Tidak memerlukan seed. Hasil aktual dan keterbatasan ada di [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
+
+Runner Vitest sekarang memaksa `DATABASE_PURPOSE=testing`, database
+`TEST_DATABASE_NAME=mabeslink_test`, serta email nonaktif/dry-run. Nama database
+testing harus mengandung `test`; bukan database operasional. Buat database tersebut
+**sekali saja** memakai petugas DB berwenang dan terapkan migration di sana sebelum
+tes. Jangan mengarahkan tes ke database operasional. Dua tes fixture XLSX lama
+bersifat kondisional dan dilewati jika sumber 42 baris tidak tersedia.
+
+### Audit UI dan membuat PDF aktual
+
+Gunakan database khusus, misalnya `mabeslink_ui_test_20261008`, kosong pada awal
+pengujian dan telah dimigrasi. Script membuat nama, koordinat, akun domain
+`example.invalid` dan password acak, **bukan akun operasional**. Fixture guidebook
+dipertahankan pada database UI test untuk inspeksi; jangan mengimpor ke produksi.
+
+```powershell
+# Setelah DB UI test dibuat terpisah; tidak me-reset DB existing:
+$env:DATABASE_PURPOSE='testing'
+$env:TEST_DATABASE_NAME='mabeslink_ui_test_20261008'
+npm run db:deploy
+npm run build
+npm run start:test                 # localhost:3100; email dipaksa nonaktif
+# Terminal kedua dengan TEST_DATABASE_NAME yang sama:
+npm run test:audit-ui              # HTTP nyata, screenshot, PDF
+npm run test:appointment-browser   # worker/SSE/alarm/snooze & holding; cleanup fixture sendiri
+# Perbarui bagian UI final dari bukti audit existing dan smoke terbaru yang lulus:
+npx tsx scripts/audit-ui-guide.ts --refresh-final
+npx tsx scripts/verify-guidebook.ts # halaman dan screenshot tertanam dalam PDF
+npm run test:visual                # form/audio/modal; sebagian payload disimulasikan
+npm run test:home-visual
+npm run test:qris-visual            # unggah/render/unduh QR samaran nyata
+npx tsx scripts/qris-api-smoke.ts   # Batik, Alam dan Signature: PNG/PDF
+```
+
+Browser default Microsoft Edge pada Windows; `BROWSER_PATH` dapat menunjuk browser
+Chromium lain yang terpasang. Skrip menolak host nonlokal. Jalankan audit login
+secara berurutan: pembatasan autentikasi tetap aktif, jadi login paralel berulang
+dapat menghasilkan 429 dan perlu menunggu. SSE dan alur layanan pada audit memakai
+API nyata tanpa intercept; tes visual lama mengintercept satu submit janji untuk
+memeriksa payload, bukan bukti persistence. Bukti screenshot/log tersedia di
+`.artifacts/audit-ui/`; PDF publik repo berisi hanya data samaran.
+Pembaruan PDF 8 Oktober memakai screenshot akuisisi, form, tracking, alarm dan
+holding dari `.artifacts/appointment-smoke/`, mengganti gambar akuisisi lama;
+halaman lain tetap screenshot aktual audit sebelumnya. Ini bukan klaim seluruh
+audit lama telah diulang. Untuk crop screenshot holding saja setelah smoke penuh:
+`npx tsx scripts/appointment-browser-smoke.ts --holding-only` (bukti terpisah pada
+`holding-results.json`, tidak mengganti hasil smoke penuh).
+
+Untuk smoke container terisolasi: build `docker build -t mabeslink:audit-20261008 .`,
+lalu `npx tsx scripts/docker-runtime-check.ts` dengan database UI test di atas.
+Ia menggunakan port loopback 3101, dua container bernama audit, volume test terpisah,
+network container PostgreSQL lokal existing (tanpa restart/recreate DB), email
+nonaktif, lalu menghentikan hanya container yang dibuatnya. Database/volume
+test tetap ada; tidak menjalankan Compose atau restart database operasional.
+Runtime, health, restart, persistence dan akses host 3101 lulus pada audit lokal.
+Ini bukan bukti HTTPS/reverse proxy/jaringan deployment tujuan sudah dikonfigurasi.
+PDF memakai font tertanam bila font TTF lokal tersedia; untuk mesin lain, isi
+`GUIDEBOOK_FONT_REGULAR` dan `GUIDEBOOK_FONT_BOLD` dengan path font TTF yang diizinkan.
 
 ## Discovery dan cross-selling Mapping
 

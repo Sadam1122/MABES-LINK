@@ -22,6 +22,8 @@ import { Button } from "@/components/ui/button";
 import { useDebouncedValue } from "@/lib/client/use-debounced-value";
 import { Dialog } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { isSuppliedQrisTemplate, qrisTemplates, qrisTemplateZones, type QrisDesign } from "@/lib/qris-design";
 import { qrisStickerPreview, qrisStickers } from "@/lib/qris-stickers";
 
@@ -673,17 +675,25 @@ export function QrisCustomEditor() {
             <div className={`rounded-2xl border p-4 ${missingFields.includes("coordinates") ? "border-red-500 bg-red-50" : "border-slate-200"}`}>
               <h3 className="mb-2 flex items-center gap-2 font-bold">
                 <MapPin className="h-5 w-5" /> Lokasi usaha (opsional)
+                <InfoTooltip label="lokasi usaha QRIS">Koordinat dan alamat tidak wajib untuk membuat desain. Cari alamat publik saja; jangan memasukkan data pribadi. Google Maps terbuka terpisah dan hanya menerima alamat publik atau koordinat.</InfoTooltip>
               </h3>
               <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
-                <label htmlFor="place-search" className="mb-2 block text-sm font-semibold text-slate-800">Cari toko atau alamat publik</label>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input id="place-search" className={`${field} sm:flex-1`} value={placeQuery} onChange={(event) => { placeController.current?.abort(); lastPlaceQuery.current = ""; setPlaceBusy(false); setPlaceResults([]); setPlaceMessage(""); setPlaceQuery(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchPlaces(placeQuery, true); } }} placeholder="Contoh: nama toko atau Jalan Mangga Besar" autoComplete="off" />
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="min-w-0 sm:flex-1"><SearchCombobox id="place-search" label="Cari toko atau alamat publik" placeholder="Contoh: nama toko atau Jalan Mangga Besar" minLength={3} dropdownSide="top"
+                    value={placeQuery} onChange={(value) => { placeController.current?.abort(); lastPlaceQuery.current = ""; setPlaceBusy(false); setPlaceResults([]); setPlaceMessage(""); setPlaceQuery(value); }}
+                    loading={placeBusy || placeQuery !== debouncedPlaceQuery} error={placeMessage.includes("dipilih") ? "" : placeMessage}
+                    empty="Tidak ditemukan. Coba alamat yang lebih lengkap, gunakan pin manual, atau buka Google Maps."
+                    options={placeResults.map((result, index) => ({ id: String(index), label: result.label }))}
+                    onSelect={(option) => {
+                      const result = placeResults[Number(option.id)]; if (!result) return;
+                      setContact((current) => ({ ...current, address: result.label, latitude: result.latitude, longitude: result.longitude, locationSource: "MAP_PIN" }));
+                      setPlaceResults([]); setPlaceMessage("Lokasi dipilih. Pastikan pin pada peta sudah benar.");
+                    }} /></div>
                   <Button type="button" onClick={() => void searchPlaces(placeQuery, true)} disabled={placeBusy}><Search size={16} />{placeBusy ? "Mencari…" : "Cari lokasi"}</Button>
                   <a href={googlePlaceSearchUrl()} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-100"><ExternalLink size={16} />Google Maps</a>
                 </div>
                 <p className="mt-2 text-xs leading-5 text-slate-500">Hasil diperbarui otomatis setelah Anda berhenti mengetik 0,5 detik. Masukkan tempat/alamat publik saja. Pencarian internal memerlukan penyedia yang diizinkan; Google Maps terbuka terpisah.</p>
                 {placeMessage && <p role="status" className="mt-2 text-xs font-medium text-amber-800">{placeMessage}</p>}
-                {placeResults.length > 0 && <ul className="mt-3 max-h-56 divide-y overflow-y-auto rounded-xl border bg-white" aria-label="Hasil pencarian lokasi">{placeResults.map((result, index) => <li key={`${result.latitude}-${result.longitude}-${index}`}><button type="button" className="flex w-full items-start gap-2 p-3 text-left text-sm hover:bg-blue-50" onClick={() => { setContact((current) => ({ ...current, address: result.label, latitude: result.latitude, longitude: result.longitude, locationSource: "MAP_PIN" })); setPlaceResults([]); setPlaceMessage("Lokasi dipilih. Pastikan pin pada peta sudah benar."); }}><MapPin size={17} className="mt-0.5 shrink-0 text-blue-700" /><span>{result.label}</span></button></li>)}</ul>}
               </div>
               <p className="mb-3 text-xs text-slate-500">
                 Klik peta untuk titik usaha. Koordinat tidak wajib untuk membuat

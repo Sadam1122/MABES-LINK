@@ -18,6 +18,14 @@ import { cn } from "@/lib/utils";
 const focusable =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
+// Dialogs share the lock. Closing a confirmation must not unlock its parent form.
+const dialogStack: HTMLElement[] = [];
+let originalOverflow = "";
+let shellWasInert = false;
+function syncDialogStack() {
+  dialogStack.forEach((panel, index) => { panel.inert = index !== dialogStack.length - 1; });
+}
+
 type DialogProps = {
   open: boolean;
   onClose: () => void;
@@ -52,21 +60,32 @@ export function Dialog({
     if (!open) return;
     returnFocusRef.current = document.activeElement as HTMLElement | null;
     const shell = document.querySelector<HTMLElement>("#app-shell");
-    const previousOverflow = document.body.style.overflow;
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (!dialogStack.length) {
+      originalOverflow = document.body.style.overflow;
+      shellWasInert = shell?.hasAttribute("inert") ?? false;
+    }
+    dialogStack.push(panel);
+    syncDialogStack();
     document.body.style.overflow = "hidden";
     shell?.setAttribute("inert", "");
     const timer = window.setTimeout(
       () =>
-        panelRef.current
-          ?.querySelector<HTMLElement>("[data-autofocus]," + focusable)
-          ?.focus(),
+        (panel.querySelector<HTMLElement>("[data-autofocus]") ?? panel.querySelector<HTMLElement>(focusable) ?? panel).focus(),
       0,
     );
     return () => {
       window.clearTimeout(timer);
-      document.body.style.overflow = previousOverflow;
-      shell?.removeAttribute("inert");
-      returnFocusRef.current?.focus();
+      const wasTop = dialogStack.at(-1) === panel;
+      const index = dialogStack.indexOf(panel);
+      if (index !== -1) dialogStack.splice(index, 1);
+      syncDialogStack();
+      if (!dialogStack.length) {
+        document.body.style.overflow = originalOverflow;
+        if (!shellWasInert) shell?.removeAttribute("inert");
+      }
+      if (wasTop && returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
       setConfirmDiscard(false);
     };
   }, [open]);
@@ -92,8 +111,9 @@ export function Dialog({
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented || dialogStack.at(-1) !== panelRef.current) return;
       event.preventDefault();
+      event.stopImmediatePropagation();
       if (confirmDiscard) {
         setConfirmDiscard(false);
         discardReturnFocusRef.current?.focus();
@@ -115,7 +135,7 @@ export function Dialog({
       : panelRef.current;
     const nodes = Array.from(
       focusRoot?.querySelectorAll<HTMLElement>(focusable) ?? [],
-    ).filter((node) => !node.hasAttribute("disabled"));
+    ).filter((node) => !node.hasAttribute("disabled") && !node.closest("[inert]") && node.getClientRects().length > 0);
     if (!nodes.length) {
       event.preventDefault();
       panelRef.current?.focus();
@@ -123,10 +143,10 @@ export function Dialog({
     }
     const first = nodes[0];
     const last = nodes[nodes.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (event.shiftKey && (document.activeElement === first || !nodes.includes(document.activeElement as HTMLElement))) {
       event.preventDefault();
       last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
+    } else if (!event.shiftKey && (document.activeElement === last || !nodes.includes(document.activeElement as HTMLElement))) {
       event.preventDefault();
       first.focus();
     }

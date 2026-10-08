@@ -4,18 +4,81 @@ services:
     container_name: mabeslink-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: mabeslink
-      POSTGRES_USER: mabeslink
-      POSTGRES_PASSWORD: mabeslink_local
+      POSTGRES_DB: ${POSTGRES_DB:?Isi POSTGRES_DB sesuai database existing}
+      POSTGRES_USER: ${POSTGRES_USER:?Isi POSTGRES_USER sesuai database existing}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Isi POSTGRES_PASSWORD dari environment lokal}
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - mabeslink_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mabeslink -d mabeslink"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks: [mabeslink]
+
+  # Next.js serves both FE and BE (Route Handlers). Worker is a separate process.
+  migrate:
+    profiles: [app]
+    image: mabeslink:local
+    env_file: ${MABESLINK_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-}
+    command: ["npm", "run", "db:deploy"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [mabeslink]
+
+  web:
+    profiles: [app]
+    image: mabeslink:local
+    build: .
+    env_file: ${MABESLINK_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-}
+      PRIVATE_STORAGE_PATH: /data/uploads
+    ports: ["127.0.0.1:3000:3000"]
+    volumes: ["mabeslink_private_uploads:/data/uploads"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [mabeslink]
+
+  worker:
+    profiles: [app]
+    image: mabeslink:local
+    env_file: ${MABESLINK_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-}
+      PRIVATE_STORAGE_PATH: /data/uploads
+    command: ["npm", "run", "worker"]
+    volumes: ["mabeslink_private_uploads:/data/uploads"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "npm", "run", "worker:health"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    networks: [mabeslink]
 
 volumes:
   mabeslink_postgres_data:
+  mabeslink_private_uploads:
+
+networks:
+  mabeslink:
+    driver: bridge

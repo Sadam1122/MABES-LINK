@@ -24,8 +24,8 @@ export const defaultSoundPreferences: SoundPreferences = {
   customSoundName: null,
   reminderKinds: {
     appointments: true,
-    assignments: true,
-    overdue: true,
+    assignments: false,
+    overdue: false,
   },
 };
 
@@ -133,13 +133,17 @@ export function shouldCatchUpAppointmentSound(
   createdAt: string,
   now = Date.now(),
 ) {
-  if (readAt || !type.startsWith("APPOINTMENT_")) return false;
+  if (readAt || !isAppointmentAlarmNotification(type)) return false;
   const created = new Date(createdAt).getTime();
-  return (
-    Number.isFinite(created) && created <= now && now - created <= 15 * 60_000
-  );
+  return Number.isFinite(created) && created <= now && now - created <= 90_000;
 }
 
+// Saved legacy preferences must never make CRUD/follow-up events play audio.
+export function isAppointmentAlarmNotification(type: string) {
+  return type === "APPOINTMENT_PRE_DUE" || type === "APPOINTMENT_ACTION_DUE";
+}
+
+const fallbackClaims = new Map<string, number>();
 export function claimAudioNotice(
   userId: string,
   notificationId: string,
@@ -152,8 +156,27 @@ export function claimAudioNotice(
     localStorage.setItem(key, String(now));
     return localStorage.getItem(key) === String(now);
   } catch {
+    const previous = fallbackClaims.get(key);
+    if (previous != null && now - previous < 7 * 24 * 60 * 60_000) return false;
+    fallbackClaims.set(key, now);
+    if (fallbackClaims.size > 500)
+      fallbackClaims.delete(fallbackClaims.keys().next().value!);
     return true;
   }
+}
+
+/** Serializes claim across same-origin tabs. Without Web Locks, dedup is best-effort. */
+export async function claimAudioNoticeOnce(
+  userId: string,
+  notificationId: string,
+) {
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request(
+      `mabeslink-notice:${userId}:${notificationId}`,
+      () => claimAudioNotice(userId, notificationId),
+    );
+  }
+  return claimAudioNotice(userId, notificationId);
 }
 
 class NotificationAudioManager {
@@ -170,6 +193,7 @@ class NotificationAudioManager {
 
   setVolume(value: number) {
     this.volume = normalizeVolume(value) / 100;
+    if (this.volume === 0) this.stop();
     if (this.master && this.context)
       this.master.gain.setValueAtTime(this.volume, this.context.currentTime);
   }
@@ -218,8 +242,54 @@ class NotificationAudioManager {
     this.active = [];
   }
 
+  /** One looping source for one acknowledged alarm, bounded to protect users. */
+  startAlarm(maxSeconds = 120) {
+    if (
+      !this.context ||
+      !this.master ||
+      this.context.state !== "running" ||
+      this.volume === 0
+    )
+      return false;
+    this.stop();
+    let buffer = this.customBuffer;
+    if (!buffer) {
+      const rate = this.context.sampleRate;
+      buffer = this.context.createBuffer(1, Math.ceil(rate * 2.4), rate);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) {
+        const t = i / rate,
+          slot = Math.floor(t / 0.3),
+          within = t % 0.3;
+        if (slot < 6 && within < 0.2) {
+          const envelope = Math.min(1, within / 0.02, (0.2 - within) / 0.03);
+          samples[i] =
+            Math.sin(2 * Math.PI * (slot % 2 ? 1046 : 880) * t) *
+            Math.max(0, envelope) *
+            0.7;
+        }
+      }
+    }
+    const source = this.context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    source.connect(this.master);
+    source.start();
+    this.active.push(source);
+    this.stopTimer = window.setTimeout(
+      () => this.stop(),
+      Math.min(120, Math.max(1, maxSeconds)) * 1000,
+    );
+    return true;
+  }
+
   play(repeatCount = 3, urgency: ReminderAlarmUrgency = "standard") {
-    if (!this.context || !this.master || this.context.state !== "running")
+    if (
+      !this.context ||
+      !this.master ||
+      this.context.state !== "running" ||
+      this.volume === 0
+    )
       return false;
     this.stop();
     const base = this.context.currentTime;
@@ -267,6 +337,10 @@ class NotificationAudioManager {
             start + toneDuration,
           );
           oscillator.connect(envelope).connect(this.master!);
+          oscillator.onended = () => {
+            oscillator.disconnect();
+            envelope.disconnect();
+          };
           oscillator.start(start);
           oscillator.stop(start + toneDuration + 0.02);
           this.active.push(oscillator);

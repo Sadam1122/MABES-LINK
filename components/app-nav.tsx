@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPinned,
+  Menu,
   QrCode,
   SlidersHorizontal,
   Users,
@@ -17,14 +18,30 @@ import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { useFeedback } from "@/components/ui/feedback";
+import { Dialog } from "@/components/ui/dialog";
 
 const items = [
   { href: "/dashboard", label: "Beranda", icon: LayoutDashboard },
-  { href: "/work", label: "Akuisisi Nasabah", mobileLabel: "Akuisisi", icon: BriefcaseBusiness },
-  { href: "/appointment-map", label: "Mapping Janji", mobileLabel: "Peta Janji", icon: CalendarDays },
+  {
+    href: "/work",
+    label: "Akuisisi Nasabah",
+    mobileLabel: "Akuisisi",
+    icon: BriefcaseBusiness,
+  },
+  {
+    href: "/appointment-map",
+    label: "Mapping Janji",
+    mobileLabel: "Peta Janji",
+    icon: CalendarDays,
+  },
   { href: "/mapping", label: "Mapping", icon: MapPinned },
   { href: "/notifications", label: "Notifikasi", icon: Bell },
-  { href: "/notification-settings", label: "Pengaturan Notifikasi", mobileLabel: "Pengaturan", icon: SlidersHorizontal },
+  {
+    href: "/notification-settings",
+    label: "Pengaturan Notifikasi",
+    mobileLabel: "Pengaturan",
+    icon: SlidersHorizontal,
+  },
 ];
 
 export function AppNav({
@@ -44,13 +61,41 @@ export function AppNav({
   const router = useRouter();
   const { confirm, toast } = useFeedback();
   const [busy, setBusy] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const navItems = [
     ...items,
-    ...(canViewQrisRegistrations ? [{ href: "/qris-registrations", label: "Pendaftar QRIS", mobileLabel: "Pendaftar", icon: QrCode }] : []),
-    ...(isAdmin ? [{ href: "/admin", label: "Manajemen Pengguna", mobileLabel: "Akun", icon: Users }] : []),
+    ...(canViewQrisRegistrations
+      ? [
+          {
+            href: "/qris-registrations",
+            label: "Pendaftar QRIS",
+            mobileLabel: "Pendaftar",
+            icon: QrCode,
+          },
+        ]
+      : []),
+    ...(isAdmin
+      ? [
+          {
+            href: "/admin",
+            label: "Manajemen Pengguna",
+            mobileLabel: "Akun",
+            icon: Users,
+          },
+        ]
+      : []),
   ];
   const signOut = async () => {
-    if (!(await confirm({ title: "Keluar dari MABES LINK?", description: "Sesi pada perangkat ini akan diakhiri. Pastikan perubahan pekerjaan sudah disimpan.", confirmLabel: "Ya, keluar", tone: "danger" }))) return;
+    if (
+      !(await confirm({
+        title: "Keluar dari MABES LINK?",
+        description:
+          "Sesi pada perangkat ini akan diakhiri. Pastikan perubahan pekerjaan sudah disimpan.",
+        confirmLabel: "Ya, keluar",
+        tone: "danger",
+      }))
+    )
+      return;
     setBusy(true);
     try {
       await authClient.signOut();
@@ -67,6 +112,7 @@ export function AppNav({
       <Link
         key={href}
         href={href}
+        onClick={() => setMoreOpen(false)}
         className={cn(
           mobileOnly
             ? "flex min-h-12 min-w-14 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-[10px] font-semibold"
@@ -87,23 +133,49 @@ export function AppNav({
   });
   if (mobileOnly)
     return (
-      <nav
-        className="fixed inset-x-0 bottom-0 z-[1200] flex h-[calc(72px+env(safe-area-inset-bottom))] items-start gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-2 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,.06)] backdrop-blur lg:hidden"
-        aria-label="Navigasi seluler"
-      >
-        <div className="flex min-w-max flex-1 justify-around gap-1">
-          {links}
+      <>
+        <nav
+          className="fixed inset-x-0 bottom-0 z-[1200] grid h-[calc(72px+env(safe-area-inset-bottom))] grid-cols-5 items-start gap-1 border-t border-slate-200 bg-white/95 px-2 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,.06)] backdrop-blur lg:hidden"
+          aria-label="Navigasi seluler"
+        >
+          {links.filter((link) =>
+            ["/dashboard", "/work", "/mapping", "/notifications"].includes(
+              String(link.key),
+            ),
+          )}
           <button
             type="button"
-            onClick={() => void signOut()}
-            disabled={busy}
-            className="flex min-h-11 min-w-14 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[10px] font-bold text-red-600 disabled:opacity-50"
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen(true)}
+            className="flex min-h-12 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-[10px] font-semibold text-slate-500 hover:bg-blue-50 hover:text-blue-800"
           >
-            <LogOut size={20} />
-            <span>{busy ? "Keluar…" : "Keluar"}</span>
+            <Menu size={20} />
+            <span>Lainnya</span>
           </button>
-        </div>
-      </nav>
+        </nav>
+        <Dialog
+          open={moreOpen}
+          onClose={() => setMoreOpen(false)}
+          title="Menu kerja"
+          description={`${roleLabel} · ${scopeLabel}`}
+          className="max-w-md"
+        >
+          <div className="grid grid-cols-2 gap-2">{links}</div>
+          <button
+            type="button"
+            onClick={() => {
+              setMoreOpen(false);
+              void signOut();
+            }}
+            disabled={busy}
+            className="mt-5 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+          >
+            <LogOut size={18} />
+            {busy ? "Keluar…" : "Keluar"}
+          </button>
+        </Dialog>
+      </>
     );
   return (
     <>

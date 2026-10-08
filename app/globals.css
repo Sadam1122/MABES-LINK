@@ -34,6 +34,7 @@ body {
 ::selection { background: #d9ebfa; color: #072b52; }
 input, textarea, select { font: inherit; }
 input::placeholder, textarea::placeholder { color: #8492a3; }
+input[type="file"] { max-width: 100%; min-width: 0; }
 @media (hover: hover) { button:not(:disabled), a { transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease; } }
 button,
 a,

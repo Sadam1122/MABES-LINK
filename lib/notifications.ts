@@ -12,6 +12,13 @@ import nodemailer, { type Transporter } from "nodemailer";
 import { hostname } from "node:os";
 
 import { db } from "@/lib/db";
+import {
+  appointmentDistancePolicy,
+  appointmentAlarmDeadline,
+  REMINDER_GRACE_MS,
+  appointmentReminderPlan,
+  verifiedAppointmentBranch,
+} from "@/lib/appointment-reminders";
 
 type Tx = Prisma.TransactionClient;
 
@@ -140,6 +147,8 @@ export async function scheduleServiceCaseJobs(
     appointmentStatus: AppointmentStatus;
     isTest: boolean;
     testNamespace: string | null;
+    sourceSystem?: string | null;
+    acceptedAt?: Date | null;
   },
   branchId: string,
 ) {
@@ -154,10 +163,90 @@ export async function scheduleServiceCaseJobs(
       lastError: "Jadwal, PIC, atau status janji berubah.",
     },
   });
+  await tx.notification.updateMany({
+    where: {
+      serviceCaseId: serviceCase.id,
+      type: { in: ["APPOINTMENT_PRE_DUE", "APPOINTMENT_ACTION_DUE"] },
+    },
+    data: { reminderExpiresAt: new Date() },
+  });
+  if (
+    serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED ||
+    serviceCase.sourceSystem === "MABES_LINK"
+  ) {
+    if (serviceCase.sourceSystem === "MABES_LINK" && !serviceCase.acceptedAt)
+      return;
+    const prospect = await tx.serviceCase.findUniqueOrThrow({
+      where: { id: serviceCase.id },
+      select: {
+        prospect: {
+          select: {
+            latitude: true,
+            longitude: true,
+            locationVerifiedAt: true,
+            locationUpdatedAt: true,
+          },
+        },
+      },
+    });
+    const point = {
+      ...prospect.prospect,
+      latitude:
+        prospect.prospect.latitude == null
+          ? null
+          : Number(prospect.prospect.latitude),
+      longitude:
+        prospect.prospect.longitude == null
+          ? null
+          : Number(prospect.prospect.longitude),
+    };
+    const branch = await tx.branch.findUnique({
+      where: { id: branchId },
+      select: { code: true },
+    });
+    const plan = appointmentReminderPlan(
+      serviceCase.appointmentAt,
+      serviceCase.appointmentStatus === "CONFIRMED",
+      point,
+      branch?.code === "11539" ? verifiedAppointmentBranch() : null,
+    );
+    const participants = await tx.serviceCaseParticipant.findMany({
+      where: { serviceCaseId: serviceCase.id },
+      select: { userId: true },
+    });
+    await tx.outboxJob.createMany({
+      data: [
+        ...new Set([serviceCase.picId, ...participants.map((p) => p.userId)]),
+      ].flatMap((recipientId) =>
+        plan.reminders.map((reminder) => ({
+          recipientId,
+          branchId,
+          serviceCaseId: serviceCase.id,
+          scheduleVersion: serviceCase.version,
+          isTest: serviceCase.isTest,
+          testNamespace: serviceCase.testNamespace,
+          type:
+            reminder.minutesBefore === 0
+              ? OutboxJobType.APPOINTMENT_ACTION_DUE
+              : OutboxJobType.APPOINTMENT_PRE_DUE,
+          dedupKey: `appointment:${serviceCase.id}:v${serviceCase.version}:recipient:${recipientId}:v2:${reminder.minutesBefore}`,
+          runAt: reminder.runAt,
+          payload: {
+            policy: "APPOINTMENT_V2",
+            minutesBefore: reminder.minutesBefore,
+            expiresAt: reminder.expiresAt.toISOString(),
+            appointmentAt: serviceCase.appointmentAt!.toISOString(),
+            distanceStatus: plan.status,
+          },
+        })),
+      ),
+      skipDuplicates: true,
+    });
+    return;
+  }
   if (
     serviceCase.appointmentStatus !== AppointmentStatus.NEEDS_SCHEDULING &&
-    serviceCase.appointmentStatus !== AppointmentStatus.PENDING_CONFIRMATION &&
-    serviceCase.appointmentStatus !== AppointmentStatus.CONFIRMED
+    serviceCase.appointmentStatus !== AppointmentStatus.PENDING_CONFIRMATION
   )
     return;
   const config = await tx.appConfig.findUnique({
@@ -168,16 +257,8 @@ export async function scheduleServiceCaseJobs(
   const quietStart = String(raw?.quietStart ?? "20:00");
   const quietEnd = String(raw?.quietEnd ?? "07:00");
   const prefix = `appointment:${serviceCase.id}:v${serviceCase.version}`;
-  const reminderAt =
-    serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED &&
-    serviceCase.appointmentAt
-      ? serviceCase.appointmentAt
-      : serviceCase.dueAt;
-  const confirmedAppointment =
-    serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED;
-  const preReminderAt = new Date(
-    reminderAt.getTime() - minutes * 60_000,
-  );
+  const reminderAt = serviceCase.dueAt;
+  const preReminderAt = new Date(reminderAt.getTime() - minutes * 60_000);
   const participants = await tx.serviceCaseParticipant.findMany({
     where: { serviceCaseId: serviceCase.id },
     select: { userId: true },
@@ -196,33 +277,17 @@ export async function scheduleServiceCaseJobs(
       isTest: serviceCase.isTest,
       testNamespace: serviceCase.testNamespace,
     };
-    if (confirmedAppointment) {
-      data.push(
-        ...[30, 25, 20, 15, 10, 5]
-          .map((minutesBefore) => ({
-            ...baseJob,
-            type: OutboxJobType.APPOINTMENT_PRE_DUE,
-            dedupKey: `${recipientPrefix}:pre:${minutesBefore}`,
-            runAt: new Date(reminderAt.getTime() - minutesBefore * 60_000),
-            payload: { minutesBefore },
-          }))
-          .filter((job) => job.runAt.getTime() >= Date.now() - 60_000),
-      );
-    } else {
-      data.push({
-        ...baseJob,
-        type: OutboxJobType.APPOINTMENT_PRE_DUE,
-        dedupKey: `${recipientPrefix}:pre`,
-        runAt: applyJakartaQuietHours(preReminderAt, quietStart, quietEnd),
-      });
-    }
+    data.push({
+      ...baseJob,
+      type: OutboxJobType.APPOINTMENT_PRE_DUE,
+      dedupKey: `${recipientPrefix}:pre`,
+      runAt: applyJakartaQuietHours(preReminderAt, quietStart, quietEnd),
+    });
     data.push({
       ...baseJob,
       type: OutboxJobType.APPOINTMENT_ACTION_DUE,
       dedupKey: `${recipientPrefix}:due`,
-      runAt: confirmedAppointment
-        ? reminderAt
-        : applyJakartaQuietHours(reminderAt, quietStart, quietEnd),
+      runAt: applyJakartaQuietHours(reminderAt, quietStart, quietEnd),
     });
   }
   await tx.outboxJob.createMany({
@@ -236,6 +301,13 @@ export async function cancelServiceCaseJobs(
   serviceCaseId: string,
   reason: string,
 ) {
+  await tx.notification.updateMany({
+    where: {
+      serviceCaseId,
+      type: { in: ["APPOINTMENT_PRE_DUE", "APPOINTMENT_ACTION_DUE"] },
+    },
+    data: { reminderExpiresAt: new Date() },
+  });
   await tx.outboxJob.updateMany({
     where: {
       serviceCaseId,
@@ -333,6 +405,7 @@ export type ClaimedJob = {
   attempts: number;
   maxAttempts: number;
   runAt: Date;
+  payload?: Prisma.JsonValue | null;
 };
 
 export async function claimJobs(
@@ -355,7 +428,7 @@ export async function claimJobs(
       "leaseExpiresAt" = ${lease}, attempts = attempts + 1, "updatedAt" = NOW()
     FROM candidates c WHERE j.id = c.id
     RETURNING j.id, j.type, j."recipientId", j."branchId", j."followUpId", j."serviceCaseId",
-      j."scheduleVersion", j.attempts, j."maxAttempts", j."runAt"
+      j."scheduleVersion", j.attempts, j."maxAttempts", j."runAt", j.payload
   `);
 }
 
@@ -437,13 +510,15 @@ export async function deliverInternalEmail(
     dateStyle: "full",
     timeStyle: "short",
   }).format(input.scheduledAt);
-  const confirmedAppointment = /janji akuisisi/i.test(input.reminderType);
+  const confirmedAppointment = /pengingat janji|janji akuisisi/i.test(
+    input.reminderType,
+  );
   const reminderSentence = confirmedAppointment
-    ? "Sudah waktunya menjalankan janji akuisisi yang telah dikonfirmasi."
+    ? "Janji terkonfirmasi mendekati jadwal. Periksa agenda dan persiapkan layanan."
     : "Sudah waktunya membuat atau mengonfirmasi janji follow-up.";
   const text = input.isTest
     ? `Halo,\nTugas ${input.taskCode} sudah perlu ditindaklanjuti. Silakan hubungi calon nasabah untuk membuat atau mengonfirmasi jadwal janji terkait kebutuhan layanan yang sudah dicatat.\nWaktu tindak lanjut: ${timeWib} WIB.\nBuka detail pekerjaan: ${input.link}`
-    : `Halo,\nTugas ${input.taskCode}: ${reminderSentence}\nWaktu tindak lanjut: ${timeWib} WIB.\nBuka detail pekerjaan: ${input.link}`;
+    : `Halo,\nTugas ${input.taskCode}: ${reminderSentence}\n${confirmedAppointment ? "Waktu janji" : "Waktu tindak lanjut"}: ${timeWib} WIB.\nBuka detail pekerjaan: ${input.link}`;
   if (process.env.EMAIL_ENABLED !== "true")
     return { status: EmailDeliveryStatus.DISABLED, preview: text };
   if (process.env.SMTP_DRY_RUN !== "false") {
@@ -514,9 +589,17 @@ export async function processJob(
 ) {
   const recipient = await client.user.findUnique({
     where: { id: job.recipientId },
-    select: { email: true, active: true, emailNotificationsEnabled: true },
+    select: {
+      email: true,
+      active: true,
+      emailNotificationsEnabled: true,
+      branchId: true,
+    },
   });
-  if (!recipient?.active) {
+  if (
+    !recipient?.active ||
+    (job.branchId && recipient.branchId !== job.branchId)
+  ) {
     await client.outboxJob.update({
       where: { id: job.id },
       data: {
@@ -534,11 +617,21 @@ export async function processJob(
   let message =
     "Periksa pekerjaan terlambat yang masih menjadi tanggung jawab Anda.";
   let isTest = false;
+  let reminderExpiresAt: Date | null = null;
+  let appointmentTime: Date | null = null;
   if (job.serviceCaseId) {
     const serviceCase = await client.serviceCase.findUnique({
       where: { id: job.serviceCaseId },
       include: {
-        prospect: { select: { internalCode: true } },
+        prospect: {
+          select: {
+            internalCode: true,
+            latitude: true,
+            longitude: true,
+            locationVerifiedAt: true,
+            locationUpdatedAt: true,
+          },
+        },
         participants: { select: { userId: true } },
       },
     });
@@ -550,6 +643,7 @@ export async function processJob(
       serviceCase.deletedAt !== null ||
       serviceCase.version !== job.scheduleVersion ||
       !validRecipient ||
+      (serviceCase.sourceSystem === "MABES_LINK" && !serviceCase.acceptedAt) ||
       (serviceCase.appointmentStatus !== AppointmentStatus.NEEDS_SCHEDULING &&
         serviceCase.appointmentStatus !==
           AppointmentStatus.PENDING_CONFIRMATION &&
@@ -569,7 +663,81 @@ export async function processJob(
       });
       return;
     }
+    const payload = job.payload as Record<string, unknown> | null;
+    if (
+      serviceCase.appointmentStatus === "CONFIRMED" ||
+      serviceCase.sourceSystem === "MABES_LINK"
+    ) {
+      const expiry =
+        typeof payload?.expiresAt === "string"
+          ? new Date(payload.expiresAt)
+          : null;
+      if (
+        payload?.policy !== "APPOINTMENT_V2" ||
+        !expiry ||
+        !Number.isFinite(expiry.getTime()) ||
+        now >= expiry ||
+        !serviceCase.appointmentAt ||
+        now >= appointmentAlarmDeadline(serviceCase.appointmentAt, job.type) ||
+        (job.type === "APPOINTMENT_ACTION_DUE" &&
+          (payload.minutesBefore !== 0 || now < serviceCase.appointmentAt)) ||
+        payload.appointmentAt !== serviceCase.appointmentAt.toISOString()
+      ) {
+        await client.outboxJob.updateMany({
+          where: { id: job.id, status: "PROCESSING" },
+          data: {
+            status: "CANCELLED",
+            completedAt: now,
+            lastError:
+              "Pengingat legacy, kedaluwarsa, atau janji sudah lewat; tidak dikejar.",
+          },
+        });
+        return;
+      }
+      reminderExpiresAt = expiry;
+      const branch = await client.branch.findUnique({
+        where: { id: serviceCase.branchId },
+        select: { code: true },
+      });
+      const point = {
+        ...serviceCase.prospect,
+        latitude:
+          serviceCase.prospect.latitude == null
+            ? null
+            : Number(serviceCase.prospect.latitude),
+        longitude:
+          serviceCase.prospect.longitude == null
+            ? null
+            : Number(serviceCase.prospect.longitude),
+      };
+      const currentDistance = appointmentDistancePolicy(
+        point,
+        branch?.code === "11539" ? verifiedAppointmentBranch() : null,
+      );
+      if (
+        ![1, 5, 10].includes(Number(payload.snoozeMinutes)) &&
+        !(
+          job.type === "APPOINTMENT_ACTION_DUE" && payload.minutesBefore === 0
+        ) &&
+        payload.minutesBefore !== 1440 &&
+        payload.minutesBefore !== currentDistance.minutesBefore
+      ) {
+        await client.$transaction(async (tx) => {
+          const changed = await tx.serviceCase.updateMany({
+            where: { id: serviceCase.id, version: serviceCase.version },
+            data: { version: { increment: 1 } },
+          });
+          if (!changed.count) return;
+          const latest = await tx.serviceCase.findUniqueOrThrow({
+            where: { id: serviceCase.id },
+          });
+          await scheduleServiceCaseJobs(tx, latest, latest.branchId);
+        });
+        return; // Never send an incorrect/late distance reminder after coordinates change.
+      }
+    }
     isTest = serviceCase.isTest;
+    appointmentTime = serviceCase.appointmentAt;
     if (
       isTest &&
       recipient.email.toLowerCase() !==
@@ -590,7 +758,8 @@ export async function processJob(
     title =
       serviceCase.appointmentStatus === AppointmentStatus.NEEDS_SCHEDULING
         ? "Perlu membuat janji"
-        : serviceCase.appointmentStatus === AppointmentStatus.PENDING_CONFIRMATION
+        : serviceCase.appointmentStatus ===
+            AppointmentStatus.PENDING_CONFIRMATION
           ? "Perlu mengonfirmasi janji"
           : job.type === OutboxJobType.APPOINTMENT_PRE_DUE
             ? "Janji akuisisi segera dimulai"
@@ -599,6 +768,16 @@ export async function processJob(
       serviceCase.appointmentStatus === AppointmentStatus.CONFIRMED
         ? `${code} memiliki janji terkonfirmasi pada jadwal yang tercatat.`
         : `${code} memerlukan tindak lanjut oleh PIC.`;
+    if (reminderExpiresAt) {
+      title = payload?.snoozeMinutes
+        ? `Pengingat janji — diingatkan kembali ${payload.snoozeMinutes} menit`
+        : payload?.minutesBefore === 1440
+          ? "Pengingat janji — 24 jam lagi"
+          : payload?.minutesBefore === 0
+            ? "Alarm janji — waktunya sekarang"
+            : `Pengingat janji — ${payload?.minutesBefore === 15 ? "15 menit" : "1 jam"} lagi`;
+      message = `${code} · Waktu janji ${new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }).format(serviceCase.appointmentAt!)} WIB. ${payload?.snoozeMinutes ? "Pengingat ulang atas permintaan penerima." : payload?.minutesBefore === 0 ? "Waktu janji telah tiba; periksa agenda Anda." : payload?.distanceStatus === "VERIFIED" ? "Lokasi terverifikasi." : "Jarak belum dapat diverifikasi; jadwal cadangan 1 jam."}`;
+    }
   } else if (job.followUpId) {
     const followUp = await client.followUp.findUnique({
       where: { id: job.followUpId },
@@ -629,33 +808,45 @@ export async function processJob(
     message = `${code} memerlukan tindakan pada jadwal yang tercatat.`;
   } else {
     const legacyOverdue = await client.followUp.count({
-        where: {
-          assignedToId: job.recipientId,
-          status: FollowUpStatus.PLANNED,
-          dueAt: { lt: now },
-          prospect: { isTest: false },
-        },
+      where: {
+        assignedToId: job.recipientId,
+        status: FollowUpStatus.PLANNED,
+        dueAt: { lt: now },
+        prospect: { isTest: false },
+      },
     });
     const serviceCaseOverdue = await client.serviceCase.count({
-        where: {
-          OR: [
-            { picId: job.recipientId },
-            { participants: { some: { userId: job.recipientId } } },
-          ],
-          isTest: false,
-          deletedAt: null,
-          dueAt: { lt: now },
-          appointmentStatus: {
-            in: [
-              AppointmentStatus.NEEDS_SCHEDULING,
-              AppointmentStatus.PENDING_CONFIRMATION,
-              AppointmentStatus.CONFIRMED,
+      where: {
+        OR: [
+          { picId: job.recipientId },
+          { participants: { some: { userId: job.recipientId } } },
+        ],
+        isTest: false,
+        deletedAt: null,
+        dueAt: { lt: now },
+        AND: [
+          {
+            OR: [
+              { sourceSystem: null },
+              { sourceSystem: { not: "MABES_LINK" } },
+              {
+                appointmentAt: { not: null },
+                appointmentStatus: { notIn: ["COMPLETED", "CANCELLED"] },
+              },
             ],
           },
-          status: {
-            notIn: ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"],
-          },
+        ],
+        appointmentStatus: {
+          in: [
+            AppointmentStatus.NEEDS_SCHEDULING,
+            AppointmentStatus.PENDING_CONFIRMATION,
+            AppointmentStatus.CONFIRMED,
+          ],
         },
+        status: {
+          notIn: ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"],
+        },
+      },
     });
     const overdue = legacyOverdue + serviceCaseOverdue;
     if (overdue === 0) {
@@ -672,22 +863,78 @@ export async function processJob(
     link = "/work?overdue=1";
     message = `${overdue} pekerjaan terlambat perlu ditinjau.`;
   }
-  const notification = await client.notification.upsert({
-    where: { dedupKey: `job:${job.id}` },
-    create: {
-      recipientId: job.recipientId,
-      branchId: job.branchId,
-      type,
-      title,
-      message,
-      link,
-      dedupKey: `job:${job.id}`,
-      followUpId: job.followUpId,
-      serviceCaseId: job.serviceCaseId,
-      isTest,
-    },
-    update: {},
+  const notification = await client.$transaction(async (tx) => {
+    // Serialize reminder publication with reschedule/cancel. Never hold this lock during SMTP.
+    if (job.serviceCaseId) {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM "ServiceCase" WHERE id = ${job.serviceCaseId} FOR UPDATE`,
+      );
+      const current = await tx.serviceCase.findUnique({
+        where: { id: job.serviceCaseId },
+      });
+      const queued = await tx.outboxJob.findUnique({ where: { id: job.id } });
+      if (
+        !current ||
+        current.version !== job.scheduleVersion ||
+        current.deletedAt ||
+        queued?.status !== "PROCESSING" ||
+        ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(
+          current.status,
+        ) ||
+        (reminderExpiresAt &&
+          reminderExpiresAt <= new Date(Math.max(now.getTime(), Date.now())))
+      ) {
+        await tx.outboxJob.updateMany({
+          where: { id: job.id, status: "PROCESSING" },
+          data: {
+            status: "CANCELLED",
+            completedAt: now,
+            lastError:
+              "Jadwal berubah atau pengingat kedaluwarsa sebelum publikasi.",
+          },
+        });
+        return null;
+      }
+    }
+    return tx.notification.upsert({
+      where: { dedupKey: `job:${job.id}` },
+      create: {
+        recipientId: job.recipientId,
+        branchId: job.branchId,
+        type,
+        title,
+        message,
+        link,
+        dedupKey: `job:${job.id}`,
+        followUpId: job.followUpId,
+        serviceCaseId: job.serviceCaseId,
+        isTest,
+        reminderExpiresAt,
+      },
+      update: {},
+    });
   });
+  if (!notification) return;
+  // Recheck immediately before external delivery, outside the transaction.
+  if (job.serviceCaseId) {
+    const current = await client.serviceCase.findUnique({
+      where: { id: job.serviceCaseId },
+    });
+    if (
+      !current ||
+      current.version !== job.scheduleVersion ||
+      current.deletedAt ||
+      ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(current.status) ||
+      (reminderExpiresAt &&
+        reminderExpiresAt <= new Date(Math.max(now.getTime(), Date.now())))
+    ) {
+      await client.outboxJob.updateMany({
+        where: { id: job.id, status: "PROCESSING" },
+        data: { status: "CANCELLED", completedAt: now },
+      });
+      return;
+    }
+  }
   let email: EmailResult = { status: EmailDeliveryStatus.DISABLED };
   if (recipient.emailNotificationsEnabled) {
     await client.emailDelivery.upsert({
@@ -709,7 +956,7 @@ export async function processJob(
         to: recipient.email,
         taskCode: code,
         reminderType: title,
-        scheduledAt: job.runAt,
+        scheduledAt: appointmentTime ?? job.runAt,
         link: `${process.env.APP_URL ?? "http://localhost:3000"}${link}`,
         isTest,
       },
@@ -739,8 +986,8 @@ export async function processJob(
           email.status === EmailDeliveryStatus.SMTP_ACCEPTED ? now : null,
       },
     });
-    await tx.outboxJob.update({
-      where: { id: job.id },
+    await tx.outboxJob.updateMany({
+      where: { id: job.id, status: "PROCESSING" },
       data: {
         status:
           email.status === EmailDeliveryStatus.UNKNOWN
@@ -791,6 +1038,141 @@ export async function workerTick(
   await recoverExpiredLeases(client, now);
   await ensureDailyDigests(client, now);
   const jobs = await claimJobs(client, workerId, now);
-  for (const job of jobs) await processJob(client, job, now, transport);
+  for (const job of jobs)
+    await processJob(
+      client,
+      job,
+      new Date(Math.max(now.getTime(), Date.now())),
+      transport,
+    );
   return jobs.length;
+}
+
+/** Worker boot migration of reminder policy; never changes appointment time/owner/accounts. */
+export async function reconcileAppointmentJobs(client: PrismaClient = db) {
+  let updated = 0;
+  let cursor: string | undefined;
+  for (;;) {
+    const cases = await client.serviceCase.findMany({
+      where: {
+        deletedAt: null,
+        status: { notIn: ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"] },
+        OR: [
+          { sourceSystem: "MABES_LINK" },
+          { appointmentStatus: "CONFIRMED" },
+        ],
+      },
+      orderBy: { id: "asc" },
+      take: 500,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    for (const item of cases) {
+      // Cancel pre-acceptance jobs left by older versions, including V2 jobs.
+      if (item.sourceSystem === "MABES_LINK" && !item.acceptedAt) {
+        await client.$transaction(async (tx) => {
+          await tx.$queryRaw(
+            Prisma.sql`SELECT id FROM "ServiceCase" WHERE id = ${item.id} FOR UPDATE`,
+          );
+          const latest = await tx.serviceCase.findUniqueOrThrow({
+            where: { id: item.id },
+          });
+          if (!latest.acceptedAt && latest.version === item.version)
+            await scheduleServiceCaseJobs(tx, latest, latest.branchId);
+        });
+        continue;
+      }
+      const jobs = await client.outboxJob.findMany({
+        where: { serviceCaseId: item.id, scheduleVersion: item.version },
+        select: { dedupKey: true, status: true },
+      });
+      if (jobs.some((job) => job.dedupKey.includes(":v2:"))) {
+        // Add only the new due-time slot. Preserve delivered pre-reminders and receipts.
+        // Case lock + unique recipient/version key make concurrent restarts idempotent.
+        await client.$transaction(async (tx) => {
+          await tx.$queryRaw(
+            Prisma.sql`SELECT id FROM "ServiceCase" WHERE id = ${item.id} FOR UPDATE`,
+          );
+          const latest = await tx.serviceCase.findUniqueOrThrow({
+            where: { id: item.id },
+          });
+          if (
+            latest.version !== item.version ||
+            latest.deletedAt ||
+            latest.appointmentStatus !== "CONFIRMED" ||
+            !latest.appointmentAt ||
+            latest.appointmentAt <= new Date() ||
+            (latest.sourceSystem === "MABES_LINK" && !latest.acceptedAt) ||
+            ["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(
+              latest.status,
+            )
+          )
+            return;
+          const participants = await tx.serviceCaseParticipant.findMany({
+            where: { serviceCaseId: latest.id },
+            select: { userId: true },
+          });
+          await tx.outboxJob.createMany({
+            data: [
+              ...new Set([latest.picId, ...participants.map((p) => p.userId)]),
+            ].map((recipientId) => ({
+              recipientId,
+              branchId: latest.branchId,
+              serviceCaseId: latest.id,
+              scheduleVersion: latest.version,
+              isTest: latest.isTest,
+              testNamespace: latest.testNamespace,
+              type: "APPOINTMENT_ACTION_DUE",
+              dedupKey: `appointment:${latest.id}:v${latest.version}:recipient:${recipientId}:v2:0`,
+              runAt: latest.appointmentAt!,
+              payload: {
+                policy: "APPOINTMENT_V2",
+                minutesBefore: 0,
+                appointmentAt: latest.appointmentAt!.toISOString(),
+                expiresAt: new Date(
+                  latest.appointmentAt!.getTime() + REMINDER_GRACE_MS,
+                ).toISOString(),
+                distanceStatus: "DUE_TIME",
+              },
+            })),
+            skipDuplicates: true,
+          });
+        });
+        continue;
+      }
+      if (
+        !jobs.some((job) => ["PENDING", "PROCESSING"].includes(job.status)) &&
+        !(
+          item.appointmentStatus === "CONFIRMED" &&
+          item.appointmentAt &&
+          item.appointmentAt > new Date()
+        )
+      )
+        continue;
+      const changed = await client.$transaction(async (tx) => {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM "ServiceCase" WHERE id = ${item.id} FOR UPDATE`,
+        );
+        const latest = await tx.serviceCase.findUniqueOrThrow({
+          where: { id: item.id },
+        });
+        if (latest.version !== item.version) return false;
+        if (
+          await tx.outboxJob.findFirst({
+            where: {
+              serviceCaseId: item.id,
+              scheduleVersion: latest.version,
+              dedupKey: { contains: ":v2:" },
+            },
+          })
+        )
+          return false;
+        await scheduleServiceCaseJobs(tx, latest, latest.branchId);
+        return true;
+      });
+      if (changed) updated++;
+    }
+    if (cases.length < 500) break;
+    cursor = cases[cases.length - 1].id;
+  }
+  return updated;
 }

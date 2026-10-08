@@ -52,7 +52,7 @@ async function main() {
         .getByText("Nama usaha *")
         .locator("input")
         .fill("Toko Samaran");
-      await page.getByRole("textbox", { name: "Cari toko atau alamat publik" }).fill("Mangga Besar");
+      await page.getByRole("combobox", { name: "Cari toko atau alamat publik" }).fill("Mangga Besar");
       await page.getByRole("button", { name: "Cari lokasi" }).click();
       await page.getByText(/Pencarian tempat belum dikonfigurasi/).waitFor();
       await page

@@ -229,6 +229,7 @@ export const serviceCaseCreateSchema = z
 
 export const appointmentCreateSchema = z
   .object({
+    appointmentStatus: z.enum(["NEEDS_SCHEDULING", "PENDING_CONFIRMATION", "CONFIRMED"]).default("CONFIRMED"),
     acquisitionCategory: z.enum(acquisitionCategoryIds),
     acquisitionProduct: z.string().trim().min(1).max(80),
     acquisitionStatus: z
@@ -256,14 +257,16 @@ export const appointmentCreateSchema = z
       .transform((value) => value || null),
     reason: z.string().trim().min(5).max(700),
     nextAction: z.string().trim().min(3).max(300),
-    picIds: z.array(z.string().min(1)).min(1).max(10),
-    appointmentAt: z.coerce.date(),
+    picIds: z.array(z.string().min(1)).max(10).optional(), // Legacy alias: companions, never the owner.
+    companionIds: z.array(z.string().min(1)).max(10).optional(),
+    appointmentAt: z.coerce.date().optional().nullable(),
+    locationVerified: z.boolean().optional(),
     targetValue: z.number().min(0).max(999_999_999_999_999).nullable(),
     realizationValue: z.number().min(0).max(999_999_999_999_999).nullable(),
     metricUnit: z.nativeEnum(AcquisitionMetricUnit).nullable(),
-    locationLabel: z.string().trim().min(2).max(120),
-    latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180),
+    locationLabel: z.string().trim().max(120),
+    latitude: z.number().min(-90).max(90).nullable(),
+    longitude: z.number().min(-180).max(180).nullable(),
     locationSource: z.enum([
       "MAP_PIN",
       "MANUAL_COORDINATES",
@@ -292,12 +295,16 @@ export const appointmentCreateSchema = z
         path: ["metricUnit"],
         message: "Satuan wajib dipilih jika target atau realisasi diisi.",
       });
-    if (new Set(value.picIds).size !== value.picIds.length)
+    const companions = value.companionIds ?? value.picIds ?? [];
+    if (new Set(companions).size !== companions.length)
       ctx.addIssue({
         code: "custom",
-        path: ["picIds"],
-        message: "PIC internal tidak boleh duplikat.",
+        path: ["companionIds"],
+        message: "Anggota pendamping tidak boleh duplikat.",
       });
+    if (value.appointmentStatus === "CONFIRMED" && !value.appointmentAt) ctx.addIssue({ code: "custom", path: ["appointmentAt"], message: "Waktu janji (WIB) wajib jika dikonfirmasi." });
+    if ((value.latitude == null) !== (value.longitude == null)) ctx.addIssue({ code: "custom", path: ["latitude"], message: "Koordinat harus lengkap atau sama-sama kosong." });
+    if (value.locationVerified && value.latitude == null) ctx.addIssue({ code: "custom", path: ["latitude"], message: "Koordinat diperlukan sebelum verifikasi lokasi." });
   });
 
 export const serviceCasePatchSchema = z
@@ -305,6 +312,7 @@ export const serviceCasePatchSchema = z
     version: z.number().int().positive(),
     status: z.nativeEnum(ServiceCaseStatus).optional(),
     picId: z.string().min(1).optional(),
+    takeControl: z.boolean().optional(),
     nextAction: z.string().trim().min(3).max(300).optional(),
     dueAt: z.coerce.date().optional(),
     appointmentStatus: z.nativeEnum(AppointmentStatus).optional(),

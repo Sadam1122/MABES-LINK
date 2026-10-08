@@ -4,11 +4,17 @@ import { Role } from "@prisma/client";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { ServiceCaseActions } from "@/components/service-case-actions";
+import { AppointmentCountdown } from "@/components/appointment-countdown";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDateTime } from "@/lib/format";
 import { googleMapsLocationUrl } from "@/lib/geo";
 import { requirePageActor } from "@/lib/session";
+import { db } from "@/lib/db";
 import { getServiceCase } from "@/lib/services/service-cases";
+import {
+  appointmentReminderPlan,
+  verifiedAppointmentBranch,
+} from "@/lib/appointment-reminders";
 import {
   getAcquisitionCategory,
   getAcquisitionProduct,
@@ -47,12 +53,31 @@ export default async function WorkDetailPage({
   } catch {
     notFound();
   }
+  const branch = await db.branch.findUnique({
+    where: { id: item.branchId },
+    select: { code: true },
+  });
+  const appointmentOnly = item.sourceSystem === "MABES_LINK";
+  const reminderPlan = appointmentReminderPlan(
+    item.appointmentAt,
+    item.appointmentStatus === "CONFIRMED",
+    {
+      ...item.prospect,
+      latitude:
+        item.prospect.latitude == null ? null : Number(item.prospect.latitude),
+      longitude:
+        item.prospect.longitude == null
+          ? null
+          : Number(item.prospect.longitude),
+    },
+    branch?.code === "11539" ? verifiedAppointmentBranch() : null,
+  );
   return (
     <>
       <PageHeader
         eyebrow={item.code}
         title={item.title}
-        description="Detail pekerjaan hanya dapat dilihat oleh PIC, supervisor cabang, atau administrator berwenang."
+        description="Detail pekerjaan hanya dapat dilihat oleh pemegang kendali, anggota pendamping, supervisor cabang, atau administrator berwenang."
       />
       <div className="grid gap-6 xl:grid-cols-[1fr_.8fr]">
         <section className="space-y-5">
@@ -65,7 +90,14 @@ export default async function WorkDetailPage({
               </span>
             </div>
             <p className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-950">
-              Akuisisi Nasabah &gt; {getAcquisitionCategory(item.acquisitionCategory)?.label ?? "Belum dikategorikan"} &gt; {getAcquisitionProduct(item.acquisitionCategory, item.acquisitionProduct)?.label ?? "Produk belum dipilih"}
+              Akuisisi Nasabah &gt;{" "}
+              {getAcquisitionCategory(item.acquisitionCategory)?.label ??
+                "Belum dikategorikan"}{" "}
+              &gt;{" "}
+              {getAcquisitionProduct(
+                item.acquisitionCategory,
+                item.acquisitionProduct,
+              )?.label ?? "Produk belum dipilih"}
             </p>
             <dl className="mt-5 grid gap-4 sm:grid-cols-2">
               <div>
@@ -78,11 +110,16 @@ export default async function WorkDetailPage({
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-slate-400">PIC</dt>
-                <dd className="font-semibold">
-                  {Array.from(
-                    new Set(item.participants.map((row) => row.user.name)),
-                  ).join(", ") || item.pic.name}
+                <dt className="text-xs text-slate-400">Kendali layanan</dt>
+                <dd className="font-semibold">{item.pic.name}</dd>
+                <dt className="mt-2 text-xs text-slate-400">
+                  Anggota pendamping/pengganti
+                </dt>
+                <dd>
+                  {item.participants
+                    .filter((row) => row.userId !== item.picId)
+                    .map((row) => row.user.name)
+                    .join(", ") || "Tidak ada"}
                 </dd>
               </div>
               <div>
@@ -91,15 +128,21 @@ export default async function WorkDetailPage({
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Nomor HP</dt>
-                <dd className="font-semibold">{item.customerPhone ?? "Tidak dicantumkan"}</dd>
+                <dd className="font-semibold">
+                  {item.customerPhone ?? "Tidak dicantumkan"}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">CIF</dt>
-                <dd className="font-semibold">{item.customerCif ?? "Tidak tersedia"}</dd>
+                <dd className="font-semibold">
+                  {item.customerCif ?? "Tidak tersedia"}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Nomor rekening</dt>
-                <dd className="font-semibold">{item.customerAccount ?? "Tidak tersedia"}</dd>
+                <dd className="font-semibold">
+                  {item.customerAccount ?? "Tidak tersedia"}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Nama toko/usaha</dt>
@@ -110,12 +153,12 @@ export default async function WorkDetailPage({
                 <dd>{item.nextAction}</dd>
               </div>
               <div>
-                <dt className="text-xs text-slate-400">Waktu tindak lanjut</dt>
-                <dd>{formatDateTime(item.dueAt)}</dd>
-              </div>
-              <div>
                 <dt className="text-xs text-slate-400">Waktu janji</dt>
-                <dd>{formatDateTime(item.appointmentAt)}</dd>
+                <dd>
+                  {item.appointmentAt
+                    ? formatDateTime(item.appointmentAt)
+                    : "Belum dijadwalkan"}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Diterima oleh</dt>
@@ -123,11 +166,15 @@ export default async function WorkDetailPage({
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Target</dt>
-                <dd className="font-semibold">{formatMetric(item.targetValue, item.metricUnit)}</dd>
+                <dd className="font-semibold">
+                  {formatMetric(item.targetValue, item.metricUnit)}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Realisasi</dt>
-                <dd className="font-semibold text-emerald-700">{formatMetric(item.realizationValue, item.metricUnit)}</dd>
+                <dd className="font-semibold text-emerald-700">
+                  {formatMetric(item.realizationValue, item.metricUnit)}
+                </dd>
               </div>
             </dl>
             <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-6">
@@ -169,53 +216,107 @@ export default async function WorkDetailPage({
               </div>
             ) : null}
           </div>
-          <div className="card p-5">
-            <h2 className="font-black">Readiness</h2>
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div className="rounded-xl bg-blue-50 p-3">
-                <p className="text-xs text-slate-500">Layanan</p>
-                <p className="font-bold">
-                  {item.status === "HANDLED" ||
-                  item.status === "VERIFIED" ||
-                  item.status === "CLOSED"
-                    ? "Selesai ditangani"
-                    : "Belum selesai"}
-                </p>
+          {!appointmentOnly && (
+            <div className="card p-5">
+              <h2 className="font-black">Readiness</h2>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-blue-50 p-3">
+                  <p className="text-xs text-slate-500">Layanan</p>
+                  <p className="font-bold">
+                    {item.status === "HANDLED" ||
+                    item.status === "VERIFIED" ||
+                    item.status === "CLOSED"
+                      ? "Selesai ditangani"
+                      : "Belum selesai"}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-emerald-50 p-3">
+                  <p className="text-xs text-slate-500">Penggunaan produk</p>
+                  <p className="font-bold">
+                    {item.prospect.usageVerifications.length
+                      ? "Terverifikasi"
+                      : "Belum diverifikasi"}
+                  </p>
+                </div>
               </div>
-              <div className="rounded-xl bg-emerald-50 p-3">
-                <p className="text-xs text-slate-500">Penggunaan produk</p>
-                <p className="font-bold">
-                  {item.prospect.usageVerifications.length
-                    ? "Terverifikasi"
-                    : "Belum diverifikasi"}
-                </p>
-              </div>
+              <p className="mt-3 text-xs text-slate-500">
+                Penyelesaian layanan tidak otomatis menjadi penggunaan produk.
+              </p>
             </div>
-            <p className="mt-3 text-xs text-slate-500">
-              Penyelesaian layanan tidak otomatis menjadi penggunaan produk.
-            </p>
-          </div>
+          )}
         </section>
-        <ServiceCaseActions
-          id={item.id}
-          version={item.version}
-          status={item.status}
-          appointmentStatus={item.appointmentStatus}
-          dueAt={item.dueAt.toISOString()}
-          appointmentAt={item.appointmentAt?.toISOString() ?? null}
-          acquisitionStatus={item.acquisitionStatus}
-          targetValue={item.targetValue == null ? null : Number(item.targetValue)}
-          realizationValue={item.realizationValue == null ? null : Number(item.realizationValue)}
-          metricUnit={item.metricUnit}
-          canVerify={
-            actor.role === Role.SUPERVISOR || actor.role === Role.ADMIN
-          }
-          canDelete={
-            actor.role === Role.SUPERVISOR ||
-            actor.role === Role.ADMIN ||
-            item.createdById === actor.id
-          }
-        />
+        <aside className="space-y-4">
+          <AppointmentCountdown
+            key={`countdown:${item.id}:${item.version}`}
+            serverNow={new Date().toISOString()}
+            appointmentAt={item.appointmentAt?.toISOString() ?? null}
+            accepted={!appointmentOnly || Boolean(item.acceptedAt)}
+            appointmentStatus={item.appointmentStatus}
+            description={reminderPlan.description}
+            reminders={item.outboxJobs
+              .filter(
+                (job) =>
+                  job.scheduleVersion === item.version &&
+                  job.recipientId ===
+                    (item.participants.some((p) => p.userId === actor.id) ||
+                    item.picId === actor.id
+                      ? actor.id
+                      : item.picId),
+              )
+              .map((job) => {
+                const payload = job.payload as {
+                  minutesBefore?: number;
+                  snoozeMinutes?: number;
+                  expiresAt?: string;
+                } | null;
+                return {
+                  id: job.id,
+                  runAt: job.runAt.toISOString(),
+                  status: job.status,
+                  minutesBefore: payload?.minutesBefore ?? 60,
+                  snoozeMinutes: payload?.snoozeMinutes,
+                  expiresAt: payload?.expiresAt ?? null,
+                };
+              })}
+          />
+          <ServiceCaseActions
+            key={`actions:${item.id}:${item.version}`}
+            canTakeControl={
+              !["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(
+                item.status,
+              ) &&
+              actor.id !== item.picId &&
+              item.participants.some((p) => p.userId === actor.id) &&
+              (actor.role === Role.CS || actor.role === Role.OUT_BRANCH)
+            }
+            id={item.id}
+            version={item.version}
+            status={item.status}
+            appointmentOnly={appointmentOnly}
+            nextAction={item.nextAction}
+            appointmentStatus={item.appointmentStatus}
+            dueAt={item.dueAt.toISOString()}
+            appointmentAt={item.appointmentAt?.toISOString() ?? null}
+            acquisitionStatus={item.acquisitionStatus}
+            targetValue={
+              item.targetValue == null ? null : Number(item.targetValue)
+            }
+            realizationValue={
+              item.realizationValue == null
+                ? null
+                : Number(item.realizationValue)
+            }
+            metricUnit={item.metricUnit}
+            canVerify={
+              actor.role === Role.SUPERVISOR || actor.role === Role.ADMIN
+            }
+            canDelete={
+              actor.role === Role.SUPERVISOR ||
+              actor.role === Role.ADMIN ||
+              item.createdById === actor.id
+            }
+          />
+        </aside>
       </div>
     </>
   );

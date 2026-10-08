@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 
 import { AppError, isAppError } from "@/lib/errors";
+import { isAllowedRequestOrigin } from "@/lib/request-origin";
 
 export function jsonOk(data: unknown, init?: ResponseInit) {
   return Response.json({ data }, init);
@@ -47,7 +48,8 @@ export function apiError(error: unknown) {
       { status: 409 },
     );
   }
-  console.error(error);
+  // Raw Prisma errors can contain field values; keep diagnostics non-sensitive.
+  console.error("API request failed", error instanceof Error ? error.name : "UNKNOWN");
   return Response.json(
     {
       error: {
@@ -68,9 +70,6 @@ export async function parseJson(request: Request) {
 }
 
 export function assertSameOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  const fetchSite = request.headers.get("sec-fetch-site");
-  const appOrigin = new URL(process.env.APP_URL ?? request.url).origin;
-  if ((origin && origin !== appOrigin) || fetchSite === "cross-site")
+  if (!isAllowedRequestOrigin(request, process.env.APP_URL))
     throw new AppError("Permintaan lintas situs tidak diizinkan.", 403, "CROSS_SITE_REQUEST");
 }

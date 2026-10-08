@@ -1,6 +1,7 @@
 "use client";
 
 const fieldLabels: Record<string, string> = {
+  appointmentStatus: "Status janji",
   acquisitionCategory: "Kategori", acquisitionProduct: "Produk/layanan",
   contactName: "Nama orang yang ditemui", businessAlias: "Nama toko/usaha",
   customerCif: "CIF", customerAccount: "Nomor rekening", customerPhone: "Nomor HP",

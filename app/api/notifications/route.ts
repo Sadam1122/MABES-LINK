@@ -1,5 +1,6 @@
 import { apiError, jsonOk } from "@/lib/api";
 import { requireActor } from "@/lib/session";
+import { notificationCursorSchema } from "@/lib/notification-cursor";
 import {
   listNotifications,
   markAllNotificationsRead,
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const cursor = params.get("cursor");
     return jsonOk(
-      await listNotifications(actor, cursor ? BigInt(cursor) : undefined),
+      await listNotifications(actor, cursor ? notificationCursorSchema.parse(cursor) : undefined),
     );
   } catch (error) {
     return apiError(error);

@@ -1,6 +1,476 @@
 # Status Implementasi MABES LINK
 
-Tanggal perubahan terakhir: 7 Oktober 2026 (Asia/Jakarta)
+Tanggal perubahan terakhir: 8 Oktober 2026 (Asia/Jakarta)
+
+## Alarm saat waktu janji dan setelah snooze/extend
+
+- Plan kini berisi T−24 jam, T−15 menit/T−1 jam berdasarkan jarak, dan **T0**.
+  Slot T0 memakai enum existing `APPOINTMENT_ACTION_DUE`, payload versi V2 dan
+  dedup key per case/version/recipient. Tidak memerlukan migration schema.
+- Worker mengizinkan publikasi T0 hingga 90 detik setelah jadwal, bukan membatalkannya
+  karena waktu janji telah tiba. Slot kedaluwarsa tetap dibatalkan. Modal/suara tetap
+  menggunakan claim atomik penerima, akses cabang/penugasan dan versi jadwal aktif.
+- Ingatkan lagi 1/5/10 menit pada alarm T0 menghasilkan job/notifikasi/modal/suara
+  baru. Batas eksplisit hingga 1 jam setelah jadwal janji; pengingat sebelum janji
+  masih tidak boleh disnooze melewati waktu janji. Bukan pengulangan otomatis dan
+  bukan mengubah jam janji. Dismiss/mute/volume/aktivasi audio tetap berlaku.
+- Extend/reschedule membatalkan semua reminder/snooze/notifikasi versi lama dan
+  membuat versi baru untuk kendali serta seluruh pendamping. Startup worker
+  menambahkan T0 pada janji existing yang masih mendatang tanpa mengulang pengingat
+  sebelumnya, mengubah akun, reset database atau mengaktifkan SMTP.
+- Kartu/detail membaca T0 dan snooze sesudah waktu janji dari outbox. Saat countdown
+  nol dan job masih menunggu, tampil **Waktunya janji / Menunggu proses worker**.
+  Default worker 60 detik dan SSE 2 detik: tidak menjanjikan alarm detik-presisi
+  atau bunyi saat tab/HP tidur. Audio browser/speaker harus tetap diizinkan.
+- Pemeriksaan aktual: `npm run typecheck`, `npm run lint`, `npm run build` lulus;
+  `npm test` **104 lulus, 2 skip**, 20 file (dua workbook sumber lama tidak tersedia).
+  Tes integrasi meliputi T0/WIB, semua pendamping, expiry, claim atomik, restart dua
+  worker tanpa pengulangan pengingat lama, snooze sesudah janji serta reschedule.
+- Smoke browser **72 pemeriksaan lulus**, Edge/Chromium headless, production build
+  lokal dan database UI test terisolasi. Jalur nyata worker → PostgreSQL → SSE →
+  modal → Web Audio diuji untuk pengingat awal, T0 pada jam janji yang diperpanjang,
+  serta snooze T0 1 menit. Jadwal lama senyap; hanya satu modal/sumber audio pada
+  dua tab. Mute/volume, role/cabang, countdown kartu, form/tracking pada
+  360/390/768/1440 px dan modal/holding desktop/HP juga lulus.
+  Bukti `.artifacts/appointment-smoke/results.json` (08:59:06 UTC) dan
+  `due-time-alarm.png`. Akun/data fixture dibersihkan; SMTP nonaktif.
+- Bunyi fisik speaker, HP terkunci, Safari/iOS dan browser lain tetap perlu tes
+  manual. Guidebook PDF dari audit sebelumnya belum menambahkan screenshot T0;
+  panduan jadwal terbaru ada di `docs/appointment-reminders.md` dan README.
+
+## Countdown kartu janji dan suara khusus modal alarm
+
+- Kartu Akuisisi Nasabah `/work` sekarang menampilkan countdown **Alarm berikutnya**
+  dan **Menuju janji** secara terpisah. Jadwal berasal dari outbox PostgreSQL versi
+  aktif dan penerima sesuai role/cabang/penugasan. Tidak menebak jadwal jika job
+  belum dibuat; kartu belum diterima meminta **Terima pekerjaan**, janji terminal
+  menonaktifkan timer dan slot kedaluwarsa tidak dihitung lagi.
+- `AppointmentCardClockProvider` memakai satu tick 1 detik dan satu refresh server
+  15 detik untuk seluruh daftar (bukan polling per kartu). Tab tersembunyi tidak
+  memicu refresh server; kembali ke tab memperbarui status. Timer tidak membuat job,
+  tidak memainkan audio dan tidak menggantikan worker 60 detik/SSE 2 detik.
+- Simpan/edit/hapus/penugasan, follow-up dan overdue sekarang **visual saja**:
+  toast/notifikasi tersimpan tetap ada, jalur audio umum di notification-center
+  dihapus. Preferensi CRUD lama tidak dapat mengaktifkannya lagi. Notifikasi OS
+  memakai `silent: true`; suara otomatis hanya oleh `AppointmentAlarmDialog`.
+  Tes Suara manual tetap tersedia. Kontrol pengulangan suara perubahan dihapus.
+- Pengingat baru membuka modal segera meski audio belum aktif, bukan menunggu klik
+  Simpan untuk memproses pengingat tertunda. Aktivasi browser tetap diperlukan
+  untuk bunyi. Matikan/snooze/volume/mute dan deduplikasi per penerima tetap berlaku.
+- Bagian **Tag peluang / sektor** di form Product Holding dihapus sesuai permintaan
+  sebelumnya, tanpa menghapus nilai existing. Checklist holding/segmen tetap ada.
+- File utama: `components/appointment-card-countdown.tsx`,
+  `lib/appointment-card-clock.ts`, `app/(app)/work/page.tsx`,
+  `lib/services/service-cases.ts`, notification-center/audio/settings,
+  `tests/appointment-card-clock.test.ts`, tes integrasi dan harness browser.
+  Tidak ada migration, reset database, perubahan akun atau aktivasi SMTP.
+- Tes regresi: **99 lulus, 2 skip**, 20 file (workbook lama tidak tersedia).
+  Typecheck, lint dan production build lulus. **64 pemeriksaan browser lulus**
+  pada database test terisolasi: countdown kartu bergerak, simpan/perubahan status
+  senyap meski preferensi lama aktif, worker → SSE → modal → alarm, snooze,
+  deduplikasi dua tab, mute/volume, akses dan tampilan desktop/HP.
+  Bunyi fisik speaker laptop/HP pengguna tetap perlu dicoba manual; pemeriksaan
+  browser memverifikasi pemutaran Web Audio, bukan volume speaker perangkat.
+- Guidebook diperbarui dari screenshot browser terbaru untuk Akuisisi Nasabah,
+  tracking, form janji, modal alarm dan Product Holding (tanpa Tag peluang/sektor).
+  PDF **33 halaman**, **8.733.361 byte**, berhasil dibaca/verifikasi gambar tertanam.
+  Screenshot halaman lain berasal dari audit sebelumnya, bukan pemeriksaan ulang
+  seluruh fitur pada perubahan countdown ini.
+
+## Alarm dengan Matikan/snooze & Product Holding — pembaruan terbaru
+
+Bagian ini menggantikan uraian bunyi satu putaran pada catatan historis:
+**satu alarm per pengingat**, dengan satu sumber Web Audio looping maksimum
+2 menit, bukan pengulangan job otomatis. Modal besar menampilkan waktu WIB,
+kode/detail janji, lokasi, kendali dan next action. Matikan, X, Escape atau overlay
+menghentikan bunyi serta menyimpan acknowledgment. Ingatkan lagi **1/5/10 menit**
+menutup alarm dan membuat satu job baru pada outbox PostgreSQL per penerima;
+tidak menggunakan timer browser sebagai scheduler. Volume/mute tetap berlaku.
+
+- Kendali dan **semua pendamping yang dipilih** menerima slot pengingat masing-
+  masing. Snooze/Matikan penerima A tidak mengubah pengingat penerima B. Dua tab
+  berkompetisi atas claim POPUP atomik; hanya pemilik modal mengambil claim AUDIO.
+  Tidak ada bunyi ulang otomatis akibat refresh/reconnect. Browser dapat kehilangan
+  aktivasi audio setelah reload/navigasi penuh; modal menjelaskan dan menyediakan
+  Bunyikan suara. Tidak memaksa izin, volume OS atau audio ketika tab/HP tidur.
+- Route baru `GET/POST /api/notifications/[id]/alarm`: login, penerima, cabang,
+  penugasan, versi/status janji serta same-origin/validasi server. Snooze melewati
+  waktu janji ditolak. Lock case → notification, unique dedup key dan transaksi
+  membuat klik ganda idempotent. Job lama dibatalkan saat reschedule/selesai/batal
+  atau perubahan penugasan. Scheduler tetap 60 detik; snooze bukan detik-presisi.
+- Migration additive **20261008140000_alarm_snooze** menambah dua timestamp
+  nullable Notification (`alarmDismissedAt`, `snoozedUntil`). Sudah diterapkan
+  dengan migrate deploy pada database lokal operasional dan dua database test;
+  **19 migrations**, tanpa reset, penghapusan mapping atau perubahan akun.
+- **Product Holding** menggantikan judul Discovery & peluang relevan. Checklist
+  berkelompok/search, 38 pilihan termasuk Livin’/NOW/Merchant/Food/Sukha, KUM/KUR,
+  CC, Kopra MCM/H2H/Portal/Partnership dan layanan bisnis. Kode MCM tetap
+  `KOPRA_CASH_MANAGEMENT`, kompatibel dengan holding existing. Default belum
+  diketahui; pilihan baru aktif setelah konfirmasi. Lainnya tersedia untuk varian
+  belum tercantum. Penawaran/response tetap terpisah dan dibatasi whitelist server,
+  bukan memperluas otorisasi produk atau menyimpulkan kelayakan dari sektor.
+  Sumber nama publik resmi dicatat di `docs/appointment-reminders.md`; katalog
+  internal/otorisasi cabang masih perlu persetujuan. Excel Mapping tetap 14 kolom.
+- Holding memakai MappingDiscovery existing; audit kini mencatat before/after
+  produk yang digunakan. Tidak ada CIF/rekening pada checklist/ekspor/email,
+  database lead kedua, scraping, akun demo baru atau perubahan penugasan nyata.
+
+File baru utama: `components/appointment-alarm-dialog.tsx`,
+`lib/services/appointment-alarm.ts`, `app/api/notifications/[id]/alarm/route.ts`,
+`prisma/migrations/20261008140000_alarm_snooze/migration.sql`,
+`tests/product-holding.test.ts`. File diubah: schema Prisma, notification-center,
+notification-audio, appointment-countdown, detail pekerjaan, worker publisher,
+mapping-discovery (catalogue/schema/panel/service), harness browser dan PDF,
+README serta panduan pengingat. Bagian historis di bawah tetap untuk jejak audit.
+
+### Pemeriksaan terbaru
+
+- `npm run typecheck`, `npm run lint`, `npm run build`: lulus.
+- `npm test`: **87 lulus, 2 skip**, 19 file; dua workbook lama tidak tersedia.
+  Termasuk semua pendamping, dua request snooze bersamaan, pilihan 1/5/10 menit,
+  versi/reschedule/selesai membatalkan snooze, batas waktu, penolakan lintas
+  penerima/cabang, timezone, dua worker/lease serta validasi holding/whitelist.
+- Smoke Edge headless: **57 pemeriksaan lulus**, production build lokal dan
+  database UI test terisolasi. Worker nyata → DB → SSE → satu modal/sumber audio
+  pada dua tab; snooze 1 menit diproses kembali, sumber audio berhenti saat snooze,
+  Matikan persisten, refresh tidak replay, mute/volume nol berlaku. Janji/form
+  diperiksa pada 360/390/768/1440 px; modal alarm dan penyimpanan/muat holding
+  MCM/H2H diperiksa desktop/390 px. `.artifacts/appointment-smoke/results.json`.
+  Percobaan awal menemukan aktivasi audio hilang setelah navigasi penuh (pembatasan
+  browser, kini diuji dengan gesture yang benar), dan fixture janji belum layak
+  masuk daftar Mapping (harness kini membuat fixture Mapping lewat API terpisah).
+  Tidak menonaktifkan batas akses atau autoplay untuk memaksakan kelulusan.
+- Guidebook **33 halaman** memakai screenshot aktual baru untuk Akuisisi Nasabah,
+  form janji, tracking, alarm dan Product Holding, desktop/HP. Screenshot halaman
+  lain dipertahankan dari audit aktual sebelumnya; bukan klaim audit seluruh
+  halaman diulang. PDF diperbarui dengan `scripts/audit-ui-guide.ts --refresh-final`.
+  Alur audit historis juga disesuaikan ke companion/accept/takeover dan SSE umum,
+  tetapi keseluruhan harness audit historis tidak dijalankan ulang pada pembaruan ini.
+  `npx tsx scripts/verify-guidebook.ts` lulus: PDF terbaca 33 halaman, 10 screenshot
+  desktop/HP baru tertanam pada halaman 21–30, bukan gambar kosong. Bukti:
+  `.artifacts/appointment-smoke/guidebook-check.json`.
+- SMTP tetap mati/dry-run, tidak mengirim email. Suara speaker nyata, Safari/iOS,
+  laptop tidur, push ketika browser tertutup dan deployment internal belum terbukti.
+
+Untuk menggunakan perubahan: deploy migration, generate Prisma, build, lalu
+restart **web dan worker**. Development `npm run dev` menjalankan keduanya.
+Konfigurasi/privasi existing dipertahankan; tidak ada credential baru atau reset DB.
+
+## Tracking janji dan titik KCP — pembaruan lanjutan 8 Oktober 2026
+
+- `lib/branch-location.ts` memakai `-6.14621,106.82421` dan alamat RT.6/RW.7
+  sesuai konfirmasi pengguna/pengelola. `.env` lokal privat memuat tiga
+  `APPOINTMENT_BRANCH_*` dengan timestamp konfirmasi; bukan klaim survei bank.
+  SMTP tetap `EMAIL_ENABLED=false`, `SMTP_DRY_RUN=true`. Restart web dan worker
+  diperlukan; proses development milik pengguna tidak dihentikan oleh pengujian.
+- Janji akuisisi (`sourceSystem=MABES_LINK`) tidak menjadwalkan alarm sebelum
+  penerimaan. PATCH `/api/service-cases/[id]` status ACCEPTED mengonfirmasi waktu
+  tercatat secara atomik, mencatat penerima/audit dan baru membuat slot mendatang.
+  Waktu kosong/lewat ditolak. Dialog penerimaan menjelaskan konfirmasi ini;
+  kebutuhan membuat janji masih boleh dicatat eksplisit tanpa waktu.
+- Form janji baru memilih Terkonfirmasi sebagai default dan mewajibkan waktu WIB.
+  Data existing tidak dikonfirmasi massal atau diubah penanggung jawabnya.
+  Worker dan endpoint klaim menolak alarm pra-penerimaan; rekonsiliasi startup
+  membatalkan job versi lama yang belum diterima, termasuk job V2.
+- `components/appointment-countdown.tsx` menampilkan countdown janji dan
+  pengingat berikutnya dari outbox PostgreSQL versi/recipient aktif, termasuk
+  status terjadwal/diproses/notifikasi dibuat/batal/gagal. Angka setiap detik;
+  refresh status server setiap 15 detik. Tidak memutar suara dari timer dan tidak
+  membuat scheduler kedua. Worker 60 detik dan SSE 2 detik tetap terpisah.
+- Detail janji menampilkan Tracking janji dan Kelola janji dalam sidebar yang
+  rapi. Readiness layanan/penggunaan tidak ditampilkan untuk janji akuisisi.
+  Janji terlaksana hanya mengubah AppointmentStatus, menghentikan reminder dan
+  mengecualikan janji terminal dari overdue/digest; tidak mengubah HANDLED atau
+  membuat UsageVerification. Kasus layanan existing tetap memiliki alur/readiness.
+- Uji browser sempat menemukan panel countdown ganda setelah refresh penerimaan:
+  dua sibling memakai key React sama. Key countdown/actions kini terpisah dan
+  harness memeriksa hanya satu panel terlihat setelah penerimaan.
+- Diagnosis read-only setelah konfigurasi: 117 mapping, 2 akun, 0 janji
+  terkonfirmasi, 2 job pending; heartbeat worker aktif dan titik KCP dikenali.
+  Akun, database dan mapping operasional tidak di-reset/diubah oleh pengujian.
+- Hasil aktual: `npm run typecheck`, `npm run lint`, dan production
+  `npm run build` lulus setelah perbaikan key. `npm test`: **79 lulus, 2 skip**
+  (dua fixture workbook lama tidak tersedia), 18 file. Smoke Edge headless:
+  **45 pemeriksaan lulus**, termasuk klik Terima pekerjaan, countdown bergerak,
+  panel tidak ganda, worker → PostgreSQL → SSE → pop-up, ringtone unggahan satu
+  putaran di dua tab, refresh/reconnect tanpa ulang, mute/volume dan akses CS
+  bukan penerima ditolak. Detail dan form diperiksa pada 360/390/768/1440 px.
+  Screenshot aktual diperiksa pada desktop dan 390 px; bukti sintetis lokal:
+  `.artifacts/appointment-smoke/results.json`, `appointment-tracking.png`,
+  `tracking-{360,390,768,1440}.png`, dan `notification-desktop.png`.
+  Dua percobaan awal smoke gagal karena panel ganda dan memicu perbaikan nyata;
+  rerun lengkap terakhir lulus. Pemutaran Web Audio terbukti, bukan audibilitas
+  speaker fisik, Safari/Opera, HP terkunci atau background push. SMTP tidak dikirim.
+
+File utama tambahan/perubahan: `components/appointment-countdown.tsx`,
+`app/(app)/work/[id]/page.tsx`, `components/service-case-actions.tsx`,
+`components/service-case-form.tsx`, `lib/branch-location.ts`,
+`lib/services/service-cases.ts`, `lib/services/notifications.ts`,
+`lib/services/dashboard.ts`, `lib/notifications.ts`,
+`tests/appointment-reminders.integration.test.ts`,
+`tests/operational.integration.test.ts`, `scripts/appointment-browser-smoke.ts`,
+`docs/appointment-reminders.md`, README dan `.env` lokal privat (tidak di-commit).
+Tidak memerlukan migration tambahan untuk perubahan lanjutan ini.
+
+## Perbaikan janji, pengingat dan alarm — 8 Oktober 2026
+
+Bagian ini menggantikan aturan alarm T−30…T0/pengulangan 5 menit pada catatan
+historis di bawah. Arsitektur dan data operasional tetap dipertahankan.
+
+### Temuan dan perubahan
+
+- Scheduler lama membuat tujuh job per penerima; pemilik janji dipilih dari PIC
+  pertama, bukan selalu pembuat. UI juga memisahkan waktu tindak lanjut dan janji.
+  Form kini hanya **Waktu janji (WIB)**, wajib saat dikonfirmasi. Jadwal tentatif
+  tidak mengaktifkan pengingat. Kendali otomatis pembuat; anggota pendamping
+  CS/OUTBRANCH cabang sama opsional dan dapat mengambil alih eksplisit/teraudit.
+  Pemilik kasus existing tidak ditulis ulang, akun tidak diubah.
+- `lib/appointment-reminders.ts`: T−24 jam ditambah T−15 menit untuk jarak
+  terverifikasi ≤1 km, T−1 jam untuk >1 km; lokasi/KCP tidak terverifikasi fallback
+  T−1 jam dengan alasan. Koordinat 0 sah. Jarak Haversine bukan waktu tempuh/rute.
+  Titik KCP hanya memakai tiga variabel `APPOINTMENT_BRANCH_*` server yang
+  dikonfirmasi pengelola; default kosong, bukan menganggap pin publik sebagai
+  terverifikasi. Perubahan pin melepaskan konfirmasi verifikasi pada form.
+- Tidak membuat slot terlewat atau alarm T0. Toleransi dispatch 90 detik (tick
+  worker 60 detik + jitter); setelah itu batal, termasuk sesudah restart/lease
+  recovery. Reschedule/kendali/status selesai/batal membatalkan versi lama.
+  Janji tanpa waktu tidak masuk overdue hanya karena tenggat teknis non-null.
+- Worker terpisah mempertahankan SKIP LOCKED, lease, dedup dan retry existing.
+  Rekonsiliasi startup job legacy dipaginasi; dua worker menggunakan row lock dan
+  cek ulang dedup versi. Publikasi notifikasi dikunci bersama ServiceCase dan
+  versinya dicek lagi sebelum SMTP, tanpa menahan transaksi selama SMTP.
+- Endpoint baru POST `/api/notifications/[id]/claim` dengan channel AUDIO/POPUP:
+  memeriksa auth, penerima/cabang, ruang data, status/versi/expiry; update atomik
+  timestamp receipt mencegah pengulangan refresh/reconnect/tab/perangkat lain.
+  At-most-once attempt, bukan jaminan audibilitas jika tab/browser mati sesudah
+  claim. Ringtone pengingat memainkan satu putaran; pengulangan pengaturan hanya
+  untuk perubahan umum. Bug label mute antar-tab ditemukan dan diperbaiki.
+- Detail pekerjaan dan peta janji membedakan kendali dari pendamping. Pengaturan
+  ADMIN menjelaskan menit reminder umum tidak mengubah kebijakan janji tersebut.
+  Status izin, aktivasi, mute, volume dan tes tetap tersedia tanpa izin paksa.
+- Email internal menggunakan waktu janji WIB/kode/link, bukan identitas nasabah.
+  SMTP nyata tidak dikirim dalam pengujian ini.
+
+### Schema, konfigurasi dan pemeriksaan aktual
+
+- Migration additive `20261008110000_appointment_reminder_receipts`:
+  `Prospect.locationVerifiedAt` dan `Notification.popupClaimedAt`,
+  `audioClaimedAt`, `reminderExpiresAt`, semuanya nullable timestamptz.
+  `db:deploy` memverifikasi 18 migrations dan tidak ada pending migration pada
+  database lokal. Tidak reset/reseed/drop data atau mengubah akun.
+- Diagnosis read-only lokal: 117 mapping, 2 akun operasional, 0 janji terkonfirmasi,
+  worker heartbeat aktif. `EMAIL_ENABLED=false`, `SMTP_DRY_RUN=true`, SMTP belum
+  lengkap dan titik KCP belum dikonfirmasi melalui environment. Konfigurasi ini
+  menjelaskan mengapa email nyata belum terkirim; status/audio Chrome pengguna
+  tidak dapat dibaca dari server dan tidak diasumsikan.
+- Tes regresi: **78 lulus, 2 dilewati**, 18 file. Dua skip tetap fixture workbook
+  lama yang tidak tersedia. Sembilan tes baru membuktikan WIB, cutoff 1 km,
+  fallback, terlalu dekat/lewat, validasi, akses, takeover, pembatalan, dua worker,
+  receipt konkuren, restart/lease tanpa pengingat terlambat, dan tenggat kasus
+  legacy bersumber null tetap terhitung tanpa membuat janji kosong overdue.
+- Browser Edge headless pada production build/database samaran terpisah:
+  **35 pemeriksaan lulus** untuk HTTP create → worker terpisah → notifikasi
+  PostgreSQL → SSE/pop-up → Web Audio ringtone unggahan, dua tab/refresh,
+  mute/volume dan denial CS nonpenerima. Form 360/390/768/1440 px memiliki satu
+  waktu wajib hanya saat dikonfirmasi dan tidak overflow horizontal.
+  Screenshot modal aktif setelah paint sudah diperiksa. Sisa validasi tombol
+  simpan yang mensyaratkan pin/pendamping ditemukan lalu dihapus; uji simpan form
+  tanpa keduanya juga lulus melalui HTTP 201 dari form aktual. Hasil paling
+  akhir ada di `.artifacts/appointment-smoke/results.json`.
+- `typecheck`, `lint`, production `build` dijalankan dan lulus; pemeriksaan akhir
+  dilakukan lagi setelah penyelarasan label peta. Pengujian terisolasi tidak
+  menggunakan akun operasional, tidak mengirim SMTP, dan membersihkan fixture
+  miliknya. Smoke lama diganti harness alur nyata, bukan klaim lima putaran.
+
+File utama: `lib/appointment-reminders.ts`, `lib/notifications.ts`,
+`lib/services/service-cases.ts`, `lib/services/notifications.ts`,
+`components/service-case-{form,actions}.tsx`, `components/notification-{center,audio-settings}.tsx`,
+`app/(app)/work`, komponen peta janji, migration/schema, `worker/index.ts`,
+dua file tes `appointment-reminders*`, `scripts/appointment-browser-smoke.ts`,
+`scripts/check-reminder-runtime.ts`, `.env*.example` dan README.
+
+Panduan lengkap: [docs/appointment-reminders.md](./docs/appointment-reminders.md).
+Jalankan migration/generate/build lalu restart web dan worker terpisah; alternatif
+development `npm run dev`. Diagnosis aman `npm run diagnose:reminders`.
+Keterbatasan: speaker fisik, HP terkunci/tab tidur, Safari/iOS/Opera dan pengiriman
+SMTP/inbox organisasi **belum dibuktikan**. Tidak ada background Web Push, izin
+browser paksa, koordinat rekaan atau integrasi CAKRA/core banking baru. PDF audit
+sebelumnya tetap artefak audit sebelumnya, bukan bukti visual kebijakan janji baru.
+
+## Audit kode, UX, regresi dan guidebook — 8 Oktober 2026
+
+### Cakupan dan data
+
+- Membaca dokumentasi, schema/migration, auth Better Auth, RBAC, komponen peta,
+  form/modal, QRIS, outbox/worker dan instruksi Next.js lokal sebelum perubahan.
+- Tidak reset, seed ulang, impor workbook, mengubah akun operasional, menonaktifkan
+  izin, atau deploy publik. Pembacaan akhir database lokal: **117 mapping dan 2
+  akun operasional**, sama dengan inventaris awal. Tidak mengubah `.env` berisi
+  secret atau menebak Google/SMTP key. Tidak ada migration/schema baru.
+- **Catatan baseline:** runner tes existing awalnya mewarisi tujuan operasional
+  dari environment lokal dan sempat membuat fixture sementara di DB tersebut;
+  cleanup suite menghapus fixture. Ini diperbaiki: Vitest kini memaksa database
+  `mabeslink_test` dan SMTP nonaktif/dry-run. Seluruh rerun regresi setelah perbaikan
+  memakai DB test. UI/HTTP memakai DB baru `mabeslink_ui_test_20261008` berisi hanya
+  data samaran, dimigrasi terpisah dengan 17 migration existing; bukan reset DB asli.
+  Fixture UI guidebook sengaja tetap di DB test agar dapat diinspeksi.
+- Model `Prospect`, referensi CAKRA opsional, ServiceCase, FollowUp, Handover,
+  MappingDiscovery/Opportunity dan UsageVerification tetap sumber data existing.
+  Tidak membuat master lead/lokasi kedua atau integrasi CAKRA. Persetujuan pemilik
+  proses untuk tumpang tindih akuisisi/kunjungan/reminder masih belum tersedia.
+
+### Perbaikan yang diimplementasikan
+
+- `components/ui/search-combobox.tsx`: ikon/placeholder stabil, dropdown saran,
+  keyboard Arrow/Enter/Escape, clear, loading/empty/error dan accessible combobox.
+  Debounce tetap di pemilik input: produk 220 ms, referensi lokasi 260 ms,
+  Mapping 280 ms, alamat QRIS 500 ms. Request alamat lama di-abort/diabaikan.
+  Dropdown alamat QRIS membuka ke atas agar tidak tertutup tombol pada HP.
+- `components/ui/info-tooltip.tsx`: informasi field/status/heatmap/audio bisa
+  hover, fokus keyboard, klik/sentuhan, Escape dan klik luar. Label Latitude,
+  status janji dan pengulangan alarm terhubung eksplisit ke input, bukan ke ikon.
+- Mapping: file input foto tidak lagi membuat overflow pada 360 px; pencarian,
+  filter, clipboard, penghapusan foto dan error menggunakan feedback konsisten.
+  Heatmap otomatis memfokuskan titik hasil filter; diuji bukan sekadar canvas ada,
+  melainkan pixel alpha berisi pada canvas. Peta tetap dominan, daftar bounded,
+  full-map toggle, batas dan titik cabang existing; reduced-motion berlaku pada
+  gerakan fly/fit Leaflet. Tidak mengubah koordinat/sumber verifikasi operasional.
+- `components/app-nav.tsx`: navigasi HP menjadi empat tujuan utama + **Lainnya**,
+  bukan deretan menu panjang. Menu kerja memakai dialog yang bisa Escape,
+  berisi tujuan sesuai izin, informasi role/cakupan dan logout berkonfirmasi.
+- `components/ui/dialog.tsx`: stack modal, hanya dialog paling atas menerima
+  Escape/Tab; modal induk inert selama konfirmasi; scroll lock bertahan hingga
+  dialog terakhir ditutup. Fokus dipulihkan dan klik dalam tidak menutup modal.
+  Form dirty tetap meminta konfirmasi; cancel Mapping tidak melewati pengaman.
+  Konfirmasi penting memfokuskan Batal dahulu, bukan aksi berbahaya.
+- Form janji: dropdown **Perlu membuat janji / Menunggu konfirmasi /
+  Terkonfirmasi**. UI default perlu membuat janji; waktu follow-up tidak otomatis
+  menjadi appointmentAt terkonfirmasi. API lama tanpa field baru mempertahankan
+  default CONFIRMED untuk kompatibilitas; perubahan UI mengirim status eksplisit.
+  Tidak memodifikasi status/jadwal record existing.
+- Alarm/notifikasi: klaim audio memakai Web Locks + localStorage untuk mencegah
+  race dua tab; fallback storage terblokir bersifat best effort per tab, bukan
+  janji exactly-once lintas browser. Semua tab tetap menerima daftar SSE, hanya
+  satu toast/claim audio per notifikasi. Volume nol/mute/disable menghentikan sumber
+  yang sedang/sudah dijadwalkan; OS notification tidak menahan audio karena
+  service worker belum aktif. Aktivasi tidak reentrant; audio/ringtone dibersihkan
+  saat unmount. Izin browser tidak dipaksa; alarm browser tertutup tetap tidak dijamin.
+- SSE: validasi cursor signed-bigint, cursor 0 ascending, 401 tanpa sesi, 422
+  cursor invalid, revalidasi sesi/role/cabang setiap poll. Mark-read memakai scope
+  penerima/cabang/isTest yang sama. Poll fallback serialized dan menangani reconnect.
+  SSE default 2 detik; polling cadangan 5 detik; scheduler worker tetap 60 detik.
+- `proxy.ts` + `lib/request-origin.ts`: semua mutasi Route Handler API memeriksa
+  origin/Sec-Fetch-Site; auth tetap memakai proteksi Better Auth. RBAC di service
+  tidak dihapus. Logger Prisma raw payload dimatikan; API/worker mencatat kategori
+  error, bukan query/mutation berisi identitas atau secret.
+- Worker tidak menjalankan dua tick tumpang tindih dalam satu proses; shutdown
+  menunggu tick aktif. Lock/lease/outbox/dedup dan transaksi existing dipertahankan.
+- Carousel banner unggahan mempunyai kontrol jeda, target sentuh dan pause pada
+  hover/fokus. Home navy-gold/reveal/brand/FAQ existing dipertahankan dan diperiksa.
+- QRIS: template lokal Batik/Alam, area kode/logo terkunci, form opsional, unggah,
+  render dan download diperiksa lewat API nyata. Tidak membuat QR pembayaran baru,
+  memalsukan merchant, atau mengklaim akrilik gratis. QR uji bukan kode pembayaran.
+
+### Arsitektur dan build server
+
+- Stack tidak berubah: Next.js **16.3.8**, React **19.2.8**, TypeScript 5,
+  Prisma/adapter-pg **7.10.0**, PostgreSQL **16**, Better Auth **1.7.7**, Zod **4.6.5**,
+  Leaflet **1.9.4**, Nodemailer **10.0.13**. Lockfile existing dipertahankan.
+- FE dan BE adalah satu web Next.js (UI + Route Handlers), bukan dua backend.
+  Worker Node terpisah membaca outbox PostgreSQL; file privat pada volume persisten.
+- `Dockerfile`: urutan npm ci/Prisma benar, build tanpa secret runtime, dependency
+  cache, runtime non-root, private storage, binding internal container 0.0.0.0.
+  Workbook nyata, dump/arsip, environment dan private data dikecualikan dari image.
+- `docker-compose.yml`: postgres/migrate/web/worker, bridge network, health,
+  depends-on, restart policy, volume database existing + private uploads, publikasi
+  loopback saja. Database tidak direcreate saat audit. `scripts/compose-local.ts`
+  derive config hanya dari DSN lokal valid tanpa menulis/mencetak secret; menolak
+  kredensial POSTGRES_* berbeda. `compose:check` berhasil terhadap environment existing.
+- Compose production tetap memakai env file server, tidak membuka port DB dan web
+  hanya loopback. Reverse proxy HTTPS internal, firewall, observability, secret
+  manager, retensi dan approval organisasi bukan sesuatu yang dibuktikan oleh build.
+  Restart policy menangani proses keluar, **bukan otomatis me-restart setiap status
+  unhealthy**; health stale tetap memerlukan monitoring/alert hosting.
+- Backup/restore PowerShell memakai env file eksplisit, memeriksa exit code,
+  tidak menimpa backup host lama; pg_restore single-transaction/exit-on-error.
+  Panduan mencakup DB dan file privat, maintenance window dan verifikasi akses.
+  Skrip hanya diperiksa sintaks; **tidak melakukan restore/drill pada database asli**.
+
+### Hasil aktual
+
+| Pemeriksaan | Hasil |
+| --- | --- |
+| `npm run typecheck` | Lulus |
+| `npm run lint` | Lulus |
+| `npm test` | 16 file, **69 lulus / 2 skipped**; dua fixture workbook 42 baris lama tidak tersedia |
+| `npm run build` | Lulus, production build Next.js termasuk Route Handlers/proxy |
+| `test:audit-ui` | **54 checks**, **54 screenshot**; 10 halaman utama pada 360/390/768/1440 px, Home/login, tambahan admin/pendaftar QRIS (desktop/HP), detail pekerjaan/handover/referensi; HTTP nyata dan pembatasan empat role |
+| SSE dua tab | Notifikasi baru diterima sekitar **1,7–2 detik** (rerun terakhir 1.967 ms), dropdown kedua tab terisi, hanya satu toast global |
+| Alur HTTP nyata | Janji belum terkonfirmasi → konfirmasi/reschedule membatalkan versi lama → CS mengakui/proses/selesai → verifikasi/tutup → handover diterima/siap → penggunaan terpisah |
+| `test:visual` | Lulus empat ukuran; form invalid/ikon/koordinat, modal fokus/Escape/overlay/dirty, kontrol volume 0/50/100, mute, custom WAV. Satu submit janji di-intercept untuk uji payload; bukan bukti persistence |
+| `test:home-visual` | Lulus 360/390/768/1440 px, animasi/reveal/carousel dan aset; tanpa overflow/gambar rusak/pageerror |
+| `test:qris-visual` | Lulus empat ukuran; API unggah QR samaran, pilih Alam, preview, unduh PNG signature valid, hapus sesi |
+| `scripts/qris-api-smoke.ts` | Batik Nusantara, Alam Indonesia, Signature: **6 respons HTTP 200**, signature PNG/PDF valid; consent kontak false, sesi dibersihkan |
+| `docker build -t mabeslink:audit-20261008 .` | Image berhasil dibangun; FE/BE/worker dalam image yang sama |
+| Docker runtime | HTTP di **dalam container** lulus: health DB/worker, API internal tanpa login 401, Home/login/QRIS/kedua template 200; restart web/worker dan database/volume privat bertahan |
+| Port Docker dari host | **Lulus**: health HTTP dapat diakses pada loopback 3101. Kegagalan smoke awal berasal dari pemanggilan `Response.ok` sebagai fungsi di skrip, sudah diperbaiki dan diulang; bukan kegagalan jaringan aplikasi |
+
+Tes regresi mencakup akses lintas PIC/cabang, handover oleh penerima, status valid,
+siap bukan penggunaan, dua client worker mengklaim satu job, lease/restart client,
+reschedule/reassign/complete, timezone WIB, SSE/query/mark-read, SMTP dry-run/kuota/
+failed, koordinat 0/batas/pasangan, URL Google Maps/Haversine, gambar privat,
+discovery/screening/manual checklist dan Excel 14 kolom. Uji restart Docker nyata
+melengkapi uji restart client, tetapi bukan bukti DR restore atau failover DB.
+Tidak mengirim SMTP eksternal; accepted/inbox **belum diuji**. Unit/Chromium headless
+memeriksa kontrol audio dan sumber suara, bukan membuktikan speaker laptop/HP
+berbunyi. Chrome/Opera/Safari/iOS dan OS notification pada perangkat nyata belum diuji.
+Geocoder/Google iframe tanpa konfigurasi valid tetap fallback jujur, bukan integrasi
+Google Places yang berhasil. Peta OSM aktual dan Google Maps URLs tetap tersedia.
+Container PostgreSQL existing masih memakai publikasi legacy port 5434 pada semua
+interface; konfigurasi Compose baru membatasi loopback tetapi audit tidak merecreate
+container/DB. Batasi firewall atau lakukan perubahan binding terjadwal oleh pengelola.
+
+### File dan cara menjalankan
+
+- Komponen: `components/ui/{search-combobox,info-tooltip,dialog,feedback}.tsx`,
+  `components/{mapping-workspace,mapping-map,service-case-form,app-nav,
+  notification-center,notification-audio-settings,qris-custom-editor,
+  home-banner-carousel}.tsx`, `app/globals.css`.
+- Server: `lib/{db,session,api,validation,request-origin,notification-cursor}.ts`,
+  `lib/client/notification-audio.ts`, `lib/services/{notifications,service-cases}.ts`,
+  `app/api/notifications/**`, `proxy.ts`, `worker/index.ts`.
+- Build/ops: Dockerfile, dua Compose, env examples, `scripts/compose-local.ts`,
+  `lib/local-compose-env.ts`, backup/restore, test server, Vitest config dan tests.
+- Bukti: `.artifacts/audit-ui/results.json`, `docker-runtime.json`, PNG screenshot
+  dan output QR uji; semuanya lokal/diabaikan Git. Panduan PDF samaran **27 halaman**
+  telah dibaca dan empat halaman dirender/diperiksa (cover, screenshot, output QRIS,
+  panduan akhir), memakai font TTF tertanam agar tidak bergantung pada substitusi
+  font viewer. Tautan:
+  [MABES_LINK_Guidebook_2026-10-08.pdf](./docs/MABES_LINK_Guidebook_2026-10-08.pdf).
+- Existing lokal: `npm ci`, `npm run compose:check`, DB existing aktif,
+  `npm run db:deploy` (migration aman; jangan reset), `npm run build`, lalu
+  `npm start` + `npm run worker` pada terminal terpisah. Atau `npm run dev`.
+  `npm run compose:up` hanya setelah port 3000 bebas dan backup/konfigurasi verified.
+  Production internal mengikuti README dan `docker-compose.production.yml`.
+- Guidebook: start web pada DB UI test menggunakan `start:test`, kemudian
+  `test:audit-ui`; QR render tambahan melalui `scripts/qris-api-smoke.ts`.
+  `npx tsx scripts/audit-ui-guide.ts --pdf-only` hanya membaca hasil audit lengkap
+  dan membangun ulang PDF tanpa membuat akun/fixture baru.
+
+### Belum terbukti / tindak lanjut hosting
+
+Jangan menyatakan siap produksi: perlu approval data/CAKRA, katalog produk,
+otorisasi integrasi, uji browser/perangkat dan audibilitas nyata, izin notifikasi,
+SMTP organisasi/inbox, akses HTTPS internal dan jaringan hosting tujuan,
+DR backup+restore terenkripsi, kapasitas/load test, monitoring dan review keamanan.
+Tidak ada chatbot, WhatsApp blast, API AI, scraping, bypass OTP/biometrik, kredit
+otomatis atau koneksi nyata core banking pada perubahan ini. Biaya worker selalu
+hidup, web, PostgreSQL, private storage dan backup terpisah dari kuota SMTP.
+
+## Riwayat sebelum audit 8 Oktober
+
+Bagian berikut adalah catatan historis; hasil terbaru di atas menggantikan
+keterangan "tanpa testing" pada pembaruan visual 7 Oktober.
 
 ## Pembaruan peta lebar dan Home (tanpa eksekusi tes)
 

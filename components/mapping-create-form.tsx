@@ -5,7 +5,7 @@ import { LocateFixed, MapPinPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
+import { Dialog, DialogClose } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
 import { MarkerIconPicker } from "@/components/marker-icon-picker";
 import { clientApi } from "@/lib/client-api";
@@ -58,6 +58,9 @@ export function MappingCreateForm({
     () => officers.find((officer) => officer.id === actorId) ?? officers[0],
     [actorId, officers],
   );
+  const closeForm = () => {
+    setOpen(false); setDirty(false); setPoint(null); setManualLatitude(""); setManualLongitude(""); setMarkerIcon("STORE"); setError("");
+  };
 
   const selectPoint = (
     latitude: number,
@@ -164,7 +167,7 @@ export function MappingCreateForm({
       </Button>
       <Dialog
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeForm}
         title="Tambah lokasi mapping"
         description="Catat lokasi prospek tanpa menganggap kebutuhan atau penggunaan produk sudah terkonfirmasi. Koordinat boleh ditambahkan nanti."
         dirty={dirty}
@@ -315,14 +318,13 @@ export function MappingCreateForm({
             </p>
           ) : null}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button
+            <DialogClose
               type="button"
               variant="outline"
-              onClick={() => setOpen(false)}
               disabled={busy}
             >
               Batal
-            </Button>
+            </DialogClose>
             <Button type="submit" disabled={busy}>
               {busy ? "Menyimpan…" : "Simpan lokasi mapping"}
             </Button>

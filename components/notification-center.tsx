@@ -2,22 +2,20 @@
 
 import { Bell, CheckCheck, Radio } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppointmentAlarmDialog } from "@/components/appointment-alarm-dialog";
 
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
 import {
-  claimAudioNotice,
   defaultSoundPreferences,
   getNotificationAudioManager,
-  reminderAlarmUrgency,
+  isAppointmentAlarmNotification,
   loadCustomSound,
   loadSoundPreferences,
   NOTIFICATION_PREFERENCES_EVENT,
-  reminderSoundKind,
   shouldCatchUpAppointmentSound,
-  shouldPlayReminderSound,
   type SoundPreferences,
 } from "@/lib/client/notification-audio";
 
@@ -29,6 +27,7 @@ type Notice = {
   link: string;
   readAt: string | null;
   createdAt: string;
+  reminderExpiresAt?: string | null;
 };
 type ConnectionMode = "menghubungkan" | "SSE" | "polling" | "terputus";
 
@@ -58,14 +57,20 @@ export function NotificationCenter({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [alarms, setAlarms] = useState<Notice[]>([]);
+  const closeAlarm = useCallback((id: string) => {
+    getNotificationAudioManager().stop();
+    setAlarms((current) => current.filter((row) => row.id !== id));
+    setItems((current) =>
+      current.map((row) =>
+        row.id === id ? { ...row, readAt: new Date().toISOString() } : row,
+      ),
+    );
+  }, []);
   const preferencesRef = useRef<SoundPreferences>(defaultSoundPreferences);
   const browserEnabledRef = useRef(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const seen = useRef(new Set<string>());
-  const pendingCatchup = useRef<Notice[]>([]);
-  const announceRef = useRef<(notice: Notice) => Promise<void>>(
-    async () => undefined,
-  );
   const dropdownRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
 
@@ -94,39 +99,49 @@ export function NotificationCenter({
 
   useEffect(() => {
     let disposed = false;
+    let arming = false;
     const armSavedSound = async () => {
       const preferences = preferencesRef.current;
       if (
+        arming ||
         !preferences.soundEnabled ||
         preferences.muted ||
         preferences.volume === 0
       )
         return;
+      arming = true;
       try {
         const manager = getNotificationAudioManager();
         manager.setVolume(preferences.volume);
         const ready = await manager.activate();
-        const customSound = await loadCustomSound(userId);
+        const customSound = await loadCustomSound(userId).catch(() => null);
+        if (disposed) return;
         if (customSound) await manager.setCustomSound(customSound.data);
         if (ready && !disposed) {
-          const waiting = pendingCatchup.current.splice(0);
-          waiting.forEach((notice) => void announceRef.current(notice));
           window.removeEventListener("pointerdown", armFromGesture, true);
           window.removeEventListener("keydown", armFromGesture, true);
         }
       } catch {
         // Browser dapat tetap meminta aktivasi manual melalui halaman pengaturan.
+      } finally {
+        arming = false;
       }
     };
     const armFromGesture = () => void armSavedSound();
     const syncPreferences = () => {
       const stored = loadSoundPreferences(userId);
       preferencesRef.current = stored;
-      getNotificationAudioManager().setVolume(stored.muted ? 0 : stored.volume);
-      browserEnabledRef.current =
-        "Notification" in window &&
-        Notification.permission === "granted" &&
-        localStorage.getItem(`mabeslink:browser-notice:${userId}`) === "on";
+      getNotificationAudioManager().setVolume(
+        stored.muted || !stored.soundEnabled ? 0 : stored.volume,
+      );
+      try {
+        browserEnabledRef.current =
+          "Notification" in window &&
+          Notification.permission === "granted" &&
+          localStorage.getItem(`mabeslink:browser-notice:${userId}`) === "on";
+      } catch {
+        browserEnabledRef.current = false;
+      }
     };
     syncPreferences();
     window.addEventListener("pointerdown", armFromGesture, true);
@@ -143,6 +158,8 @@ export function NotificationCenter({
     }
     return () => {
       disposed = true;
+      getNotificationAudioManager().clearCustomSound();
+      registrationRef.current = null;
       window.removeEventListener("pointerdown", armFromGesture, true);
       window.removeEventListener("keydown", armFromGesture, true);
       window.removeEventListener(
@@ -157,69 +174,68 @@ export function NotificationCenter({
     let source: EventSource | null = null;
     let poll: number | null = null;
     let cancelled = false;
-    const channel =
-      "BroadcastChannel" in window
-        ? new BroadcastChannel(`mabeslink:notifications:${userId}`)
-        : null;
-    channel?.addEventListener("message", (event) => {
-      if (typeof event.data === "string") seen.current.add(event.data);
-    });
+    const controller = new AbortController();
+    let requesting = false;
+    seen.current.clear();
 
     const announce = async (notice: Notice) => {
-      if (!claimAudioNotice(userId, notice.id)) return;
-      channel?.postMessage(notice.id);
-      toast(`${notice.title}: ${notice.message}`, "info");
+      const fresh =
+        Date.now() - new Date(notice.createdAt).getTime() < 90_000 &&
+        (!notice.reminderExpiresAt ||
+          new Date(notice.reminderExpiresAt).getTime() > Date.now());
+      if (!fresh || notice.readAt) return;
+      const claim = async (channel: "AUDIO" | "POPUP") => {
+        const response = await fetch(`/api/notifications/${notice.id}/claim`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ channel }),
+        });
+        return response.ok && (await response.json()).data?.claimed === true;
+      };
+      const display = await claim("POPUP").catch(() => false);
+      if (cancelled) return;
+      if (display) toast(`${notice.title}: ${notice.message}`, "info");
       if (
+        display &&
         browserEnabledRef.current &&
         "Notification" in window &&
         Notification.permission === "granted"
       ) {
-        try {
-          const registration =
-            registrationRef.current ?? (await navigator.serviceWorker.ready);
-          await registration.showNotification(notice.title, {
-            body: notice.message,
-            tag: `mabeslink-${notice.id}`,
-            data: { url: notice.link },
-          });
-        } catch {
-          // Notifikasi persisten tetap dapat dibaca di dalam aplikasi.
+        // OS notification must never hold up the audio path.
+        const registration = registrationRef.current;
+        if (registration?.active) {
+          void registration
+            .showNotification(notice.title, {
+              body: notice.message,
+              tag: `mabeslink-${notice.id}`,
+              silent: true, // Sound is owned by the appointment modal, never the OS toast.
+              data: { url: notice.link },
+            })
+            .catch(() => undefined);
         }
       }
-      const preferences = preferencesRef.current;
-      const kind = reminderSoundKind(notice.type);
-      if (
-        !preferences.soundEnabled ||
-        preferences.muted ||
-        preferences.volume === 0 ||
-        !preferences.reminderKinds[kind] ||
-        !shouldPlayReminderSound(notice.type, new Date(), quietStart, quietEnd)
-      )
-        return;
-      const urgency = reminderAlarmUrgency(notice.type);
-      if (
-        getNotificationAudioManager().play(preferences.repeatCount, urgency)
-      ) {
-        navigator.vibrate?.(
-          urgency === "appointment-due"
-            ? [400, 100, 400, 100, 800]
-            : [180, 100, 180],
-        );
+      if (isAppointmentAlarmNotification(notice.type)) {
+        if (display)
+          setAlarms((current) =>
+            current.some((row) => row.id === notice.id)
+              ? current
+              : [...current, notice].slice(0, 10),
+          );
+        return; // The modal owner alone claims/loops audio for this recipient.
       }
+      // Saving, edits, assignments and follow-ups remain visual-only. Only
+      // AppointmentAlarmDialog may claim audio and start an automatic alarm.
     };
-    announceRef.current = announce;
 
     const merge = (incoming: Notice[], shouldAnnounce: boolean) => {
+      if (cancelled) return;
       const fresh = incoming.filter((notice) => !seen.current.has(notice.id));
       incoming.forEach((notice) => seen.current.add(notice.id));
       setItems((current) => {
         const merged = [
-          ...fresh,
+          ...incoming,
           ...current.filter(
             (row) => !incoming.some((notice) => notice.id === row.id),
-          ),
-          ...incoming.filter((notice) =>
-            current.some((row) => row.id === notice.id),
           ),
         ];
         return Array.from(new Map(merged.map((row) => [row.id, row])).values())
@@ -233,7 +249,10 @@ export function NotificationCenter({
     };
 
     const requestItems = async (announceNew: boolean) => {
-      const response = await fetch("/api/notifications", { cache: "no-store" });
+      const response = await fetch("/api/notifications", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const payload = await response.json();
       if (!response.ok)
         throw new Error(payload.error?.message ?? "Notifikasi gagal dimuat.");
@@ -241,15 +260,27 @@ export function NotificationCenter({
       return (payload.data ?? []) as Notice[];
     };
 
-    const pollNow = () =>
+    const pollNow = () => {
+      if (requesting || cancelled) return;
+      requesting = true;
       void requestItems(true)
-        .then(() => setError(""))
+        .then(() => {
+          if (!cancelled) {
+            setError("");
+            setMode("polling");
+          }
+        })
         .catch(() => {
+          if (cancelled) return;
           setMode("terputus");
           setError(
             "Pembaruan notifikasi sedang terputus. Sistem akan mencoba lagi.",
           );
+        })
+        .finally(() => {
+          requesting = false;
         });
+    };
 
     void requestItems(false)
       .then((initial) => {
@@ -269,11 +300,9 @@ export function NotificationCenter({
               new Date(left.createdAt).getTime(),
           )
           .slice(0, 1);
-        pendingCatchup.current = catchup;
-        if (getNotificationAudioManager().state === "running") {
-          pendingCatchup.current = [];
-          catchup.forEach((notice) => void announce(notice));
-        }
+        // Show a fresh reminder immediately, even if audio is not activated.
+        // Never defer it to an unrelated Save/Edit click later on.
+        catchup.forEach((notice) => void announce(notice));
         const cursor = initial.reduce(
           (maximum, item) =>
             BigInt(item.id) > maximum ? BigInt(item.id) : maximum,
@@ -281,8 +310,17 @@ export function NotificationCenter({
         );
         source = new EventSource(`/api/notifications/stream?cursor=${cursor}`);
         source.addEventListener("notification", (event) => {
-          merge([JSON.parse((event as MessageEvent).data) as Notice], true);
-          setError("");
+          try {
+            const notice = JSON.parse((event as MessageEvent).data) as Notice;
+            if (!/^\d+$/.test(notice.id)) return;
+            merge([notice], true);
+            setError("");
+          } catch {
+            setError(
+              "Pesan realtime belum dapat dibaca. Mencoba polling cadangan.",
+            );
+            pollNow();
+          }
         });
         source.onopen = () => {
           setMode("SSE");
@@ -295,6 +333,7 @@ export function NotificationCenter({
         };
       })
       .catch((reason) => {
+        if (cancelled) return;
         setLoading(false);
         setError(
           reason instanceof Error ? reason.message : "Notifikasi gagal dimuat.",
@@ -305,10 +344,9 @@ export function NotificationCenter({
 
     return () => {
       cancelled = true;
+      controller.abort();
       source?.close();
       if (poll != null) window.clearInterval(poll);
-      channel?.close();
-      announceRef.current = async () => undefined;
     };
   }, [quietEnd, quietStart, toast, userId]);
 
@@ -362,6 +400,17 @@ export function NotificationCenter({
 
   return (
     <>
+      {alarms[0] && (
+        <AppointmentAlarmDialog
+          key={alarms[0].id}
+          id={alarms[0].id}
+          title={alarms[0].title}
+          userId={userId}
+          quietStart={quietStart}
+          quietEnd={quietEnd}
+          onDone={closeAlarm}
+        />
+      )}
       <div ref={dropdownRef} className="relative">
         <button
           ref={bellRef}

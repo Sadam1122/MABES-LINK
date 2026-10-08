@@ -78,6 +78,10 @@ function client() {
 }
 
 describe("tahap 2 mapping, outbox, SSE dan SMTP", () => {
+  it("pengujian menggunakan database terpisah, tidak pernah database operasional", () => {
+    expect(process.env.DATABASE_PURPOSE).toBe("testing");
+    expect(new URL(resolveDatabaseUrl()).pathname).toMatch(/test/i);
+  });
   beforeAll(async () => {
     await db.branch.create({
       data: {
@@ -279,6 +283,8 @@ describe("tahap 2 mapping, outbox, SSE dan SMTP", () => {
       ],
     });
     const visible = await listNotifications(out, undefined, 100);
+    const initialStream = await listNotifications(out, BigInt(0), 100);
+    expect(initialStream.map((notice) => notice.id)).toEqual([...initialStream].sort((left, right) => BigInt(left.id) < BigInt(right.id) ? -1 : 1).map((notice) => notice.id));
     expect(visible.some((item) => item.title === "Untuk Raka")).toBe(true);
     expect(visible.some((item) => item.title === "Untuk Dina")).toBe(false);
     const marked = await markAllNotificationsRead(out);

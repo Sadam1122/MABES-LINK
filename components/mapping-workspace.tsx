@@ -9,12 +9,15 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
 } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useFeedback } from "@/components/ui/feedback";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { MarkerGlyph, MarkerIconPicker } from "@/components/marker-icon-picker";
 import { MappingDiscoveryPanel } from "@/components/mapping-discovery-panel";
 import { useDebouncedValue } from "@/lib/client/use-debounced-value";
@@ -114,6 +117,7 @@ export function MappingWorkspace({
   const [placeQuery, setPlaceQuery] = useState(prospects[0]?.addressHint ?? "");
   const [placeResults, setPlaceResults] = useState<{ label: string; latitude: number; longitude: number }[]>([]);
   const [placeBusy, setPlaceBusy] = useState(false);
+  const placeController = useRef<AbortController | null>(null);
   const [placeMessage, setPlaceMessage] = useState("");
   const [picFilter, setPicFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -144,6 +148,7 @@ export function MappingWorkspace({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [openedAt] = useState(() => Date.now());
+  useEffect(() => () => placeController.current?.abort(), []);
 
   const locate = useCallback(() => {
     if (!navigator.geolocation) {
@@ -360,6 +365,8 @@ export function MappingWorkspace({
   const heatPoints = useMemo(() => points.filter((item) => heatScope === "all" || (heatScope === "verified" ? item.usedAt !== null : item.actionNeeded)), [points, heatScope]);
 
   function choose(item: Prospect) {
+    placeController.current?.abort();
+    setPlaceBusy(false);
     setSelected(item);
     setLabel(item.locationLabel ?? "");
     setPlaceQuery(item.addressHint ?? "");
@@ -380,21 +387,27 @@ export function MappingWorkspace({
       setPlaceMessage("Isi nama tempat atau alamat publik minimal 3 karakter.");
       return;
     }
+    placeController.current?.abort();
+    const controller = new AbortController();
+    placeController.current = controller;
     setPlaceBusy(true);
     setPlaceMessage("");
     setPlaceResults([]);
     try {
       const results = await clientApi<{ label: string; latitude: number; longitude: number }[]>(
         `/api/location-search?q=${encodeURIComponent(query.slice(0, 100))}`,
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted) return;
       setPlaceResults(results);
       setPlaceMessage(results.length
         ? "Pilih kandidat, periksa posisi di peta, lalu konfirmasi simpan. Hasil pencarian belum tentu tepat."
         : "Tidak ada kandidat. Periksa alamat di Google Maps lalu pilih pin atau masukkan koordinat manual.");
     } catch (cause) {
+      if (controller.signal.aborted) return;
       setPlaceMessage(cause instanceof Error ? cause.message : "Pencarian tidak tersedia. Pilih pin atau masukkan koordinat manual.");
     } finally {
-      setPlaceBusy(false);
+      if (placeController.current === controller) setPlaceBusy(false);
     }
   }
 
@@ -524,10 +537,12 @@ export function MappingWorkspace({
 
   async function copyCoordinates() {
     if (selected?.latitude == null || selected.longitude == null) return;
-    await navigator.clipboard.writeText(
-      `${selected.latitude},${selected.longitude}`,
-    );
-    setGeoMessage("Koordinat disalin.");
+    try {
+      await navigator.clipboard.writeText(`${selected.latitude},${selected.longitude}`);
+      toast("Koordinat disalin.", "success");
+    } catch {
+      toast("Clipboard tidak diizinkan. Salin koordinat yang tampil secara manual.", "error");
+    }
   }
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
@@ -566,9 +581,14 @@ export function MappingWorkspace({
       }))
     )
       return;
-    await clientApi(`/api/location-photos/${id}`, { method: "DELETE" });
-    toast("Gambar lokasi dihapus.", "success");
-    location.reload();
+    setBusy(true);
+    try {
+      await clientApi(`/api/location-photos/${id}`, { method: "DELETE" });
+      toast("Gambar lokasi dihapus.", "success");
+      location.reload();
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : "Gambar belum dapat dihapus.", "error");
+    } finally { setBusy(false); }
   }
 
   async function replacePhoto(
@@ -620,8 +640,8 @@ export function MappingWorkspace({
 
   return (
     <div className="space-y-4">
-      <section className="card overflow-hidden border-blue-200">
-        <div className="bg-[#092b60] p-5 text-white sm:p-6">
+      <section className="card border-blue-200">
+        <div className="rounded-t-2xl bg-[#092b60] p-5 text-white sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[.18em] text-amber-300">Peta kerja · {roleLabel}</p>
@@ -637,9 +657,15 @@ export function MappingWorkspace({
           <p className="mt-3 text-xs text-blue-200">{prospects.length} dari {totalLocations} lokasi termuat · Ekspor Excel mencakup seluruh cakupan Anda (maks. 5.000).</p>
         </div>
         <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4 xl:items-end sm:p-5">
-          <label className="text-xs font-bold text-slate-700 xl:col-span-2">Cari nama, alamat, atau PIC
-            <input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari lokasi atau nama usaha…" />
-          </label>
+          <div className="xl:col-span-2">
+            <SearchCombobox label="Cari nama, alamat, atau PIC" placeholder="Cari lokasi atau nama usaha…" value={search} onChange={setSearch}
+              loading={search !== debouncedSearch} empty="Tidak ada lokasi sesuai pencarian dan filter. Coba kata lain atau reset filter."
+              options={withDistance.slice(0, 6).map(({ item }) => ({ id: item.id, label: item.businessAlias, detail: `${item.areaBlock ?? "Area belum diisi"} · ${item.assignedTo.name}` }))}
+              onSelect={(option) => {
+                const item = prospects.find((entry) => entry.id === option.id);
+                if (item) { choose(item); setSearch(item.businessAlias); }
+              }} />
+          </div>
           <label className="text-xs font-bold text-slate-700">PIC
             <select className="field mt-1" value={picFilter} onChange={(event) => setPicFilter(event.target.value)}>
               <option value="all">Semua PIC</option>
@@ -659,7 +685,7 @@ export function MappingWorkspace({
           </div>
         </div>
         <details className="group border-t border-slate-200 bg-[#f8fafd] px-4 py-3 sm:px-5">
-          <summary className="cursor-pointer text-sm font-bold text-blue-900">Filter lanjutan <span className="ml-1 text-slate-500 group-open:hidden">＋</span><span className="ml-1 hidden text-slate-500 group-open:inline">−</span></summary>
+          <summary className="min-h-11 cursor-pointer text-sm font-bold text-blue-900">Filter lanjutan <span className="ml-1 text-slate-500 group-open:hidden">＋</span><span className="ml-1 hidden text-slate-500 group-open:inline">−</span></summary>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4 xl:items-end">
         <label className="text-xs font-bold text-slate-700">
           Status akuisisi
@@ -746,7 +772,7 @@ export function MappingWorkspace({
               </button>
               <div className="inline-flex rounded-xl border bg-slate-100 p-1" role="group" aria-label="Tampilan peta">
                 <button type="button" aria-pressed={viewMode === "markers"} onClick={() => setViewMode("markers")} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${viewMode === "markers" ? "bg-white text-blue-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>Penanda</button>
-                <button type="button" aria-pressed={viewMode === "heatmap"} onClick={() => setViewMode("heatmap")} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${viewMode === "heatmap" ? "bg-white text-blue-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>Heatmap</button>
+                <button type="button" aria-pressed={viewMode === "heatmap"} onClick={() => { setViewMode("heatmap"); setFitRequest((value) => value + 1); }} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${viewMode === "heatmap" ? "bg-white text-blue-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>Heatmap</button>
               </div>
               </div>
             </div>
@@ -775,6 +801,7 @@ export function MappingWorkspace({
             <details className="mx-2 mb-3 rounded-xl border border-slate-200 bg-slate-50" open={viewMode === "heatmap"}>
               <summary className="cursor-pointer px-3 py-3 text-xs font-bold text-slate-700">{viewMode === "heatmap" ? "Pengaturan heatmap & penanda" : "Warna, ukuran penanda & legenda"}</summary>
               <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 p-3">
+              <span className="inline-flex items-center text-xs text-slate-600">Tentang peta <InfoTooltip label="heatmap dan batas wilayah">Heatmap menunjukkan kepadatan titik tersimpan sesuai filter, bukan kelayakan kredit atau potensi dana. Batas wilayah merupakan referensi kerja, bukan batas administratif yang disahkan. Data CAKRA tetap melalui referensi/handoff yang diizinkan.</InfoTooltip></span>
               <label className="flex min-h-11 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold">
                 Warna marker
                 <select
@@ -893,7 +920,7 @@ export function MappingWorkspace({
               <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-3">
                 <label className="label" htmlFor="mapping-place-query">Cari alamat atau nama tempat publik</label>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input id="mapping-place-query" className="field min-w-0 flex-1" value={placeQuery} onChange={(event) => setPlaceQuery(event.target.value)} placeholder="Contoh: nama usaha, jalan, Jakarta" maxLength={100} />
+                  <input id="mapping-place-query" className="field min-w-0 flex-1" value={placeQuery} onChange={(event) => { placeController.current?.abort(); setPlaceBusy(false); setPlaceResults([]); setPlaceMessage(""); setPlaceQuery(event.target.value); }} placeholder="Contoh: nama usaha, jalan, Jakarta" maxLength={100} />
                   <Button type="button" variant="outline" disabled={placeBusy} onClick={() => void searchPlace()}>{placeBusy ? "Mencari…" : "Cari kandidat"}</Button>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
@@ -1109,7 +1136,8 @@ export function MappingWorkspace({
                 </div>
                 {canEdit && selected.locationPhotos.length < 3 && (
                   <input
-                    className="mt-3 block text-sm"
+                    className="field mt-3 block min-w-0 max-w-full pt-2 text-xs"
+                    aria-label="Unggah foto lokasi"
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
                     onChange={(event) => void upload(event)}
@@ -1144,6 +1172,7 @@ export function MappingWorkspace({
               <button
                 type="button"
                 onClick={() => choose(item)}
+                data-testid={`mapping-item-${item.id}`}
                 key={item.id}
                 aria-pressed={selected?.id === item.id}
                 className={`w-full rounded-xl border p-3 text-left transition-colors ${

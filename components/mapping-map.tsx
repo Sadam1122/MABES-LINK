@@ -34,6 +34,7 @@ type Point = {
   usedAt: string | null;
   markerIcon: MappingMarkerIconValue;
 };
+const motionOptions = () => ({ animate: !window.matchMedia("(prefers-reduced-motion: reduce)").matches, duration: 0.7 });
 function Picker({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   useMapEvents({
     click(event) {
@@ -71,13 +72,13 @@ function MapController({
   }, [map]);
   useEffect(() => {
     if (bankRequest < 1) return;
-    map.flyTo([MABES_BRANCH.latitude, MABES_BRANCH.longitude], 16, { duration: 0.7 });
+    map.flyTo([MABES_BRANCH.latitude, MABES_BRANCH.longitude], 16, motionOptions());
   }, [bankRequest, map]);
   useEffect(() => {
     if (selectedId === previousSelection.current) return;
     previousSelection.current = selectedId;
     const point = points.find((item) => item.id === selectedId);
-    if (point) map.flyTo([point.latitude, point.longitude], Math.max(map.getZoom(), 16), { duration: 0.7 });
+    if (point) map.flyTo([point.latitude, point.longitude], Math.max(map.getZoom(), 16), motionOptions());
   }, [map, points, selectedId]);
   useEffect(() => {
     if (focusRequest < 1) return;
@@ -85,6 +86,7 @@ function MapController({
       [...MANGGA_BESAR_BOUNDARY.map(([lat, lng]): [number, number] => [lat, lng]), [MABES_BRANCH.latitude, MABES_BRANCH.longitude] as [number, number]],
       {
         padding: [22, 22],
+        ...motionOptions(),
       },
     );
   }, [focusRequest, map]);
@@ -92,12 +94,12 @@ function MapController({
     if (fitRequest < 1 || points.length === 0) return;
     map.fitBounds(
       points.map((point) => [point.latitude, point.longitude]),
-      { padding: [36, 36], maxZoom: 17 },
+      { padding: [36, 36], maxZoom: 17, ...motionOptions() },
     );
   }, [fitRequest, map, points]);
   useEffect(() => {
     if (!candidate) return;
-    map.flyTo([candidate.latitude, candidate.longitude], Math.max(map.getZoom(), 16), { duration: 0.7 });
+    map.flyTo([candidate.latitude, candidate.longitude], Math.max(map.getZoom(), 16), motionOptions());
   }, [candidate, map]);
   return null;
 }

@@ -11,11 +11,15 @@ async function main() {
   await mkdir(".artifacts", { recursive: true });
   const browser = await chromium.launch({ executablePath, headless: true });
   try {
-    for (const width of [1440, 390]) {
+    for (const width of [360, 390, 768, 1440]) {
       const page = await browser.newPage({ viewport: { width, height: 850 }, deviceScaleFactor: 1 });
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(url, { waitUntil: "networkidle" });
+      // Reveal every actual section before capturing a full-page image.
+      for (const section of await page.locator(".scroll-reveal").all()) {
+        await section.scrollIntoViewIfNeeded(); await page.waitForTimeout(150);
+      }
       await page.getByRole("link", { name: /Buat desain QRIS/ }).first().waitFor();
       await page.locator("footer").scrollIntoViewIfNeeded();
       await page.waitForTimeout(300);

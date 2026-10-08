@@ -30,6 +30,7 @@ export type AppointmentMapPoint = {
   appointmentStatus: string;
   appointmentAt: string;
   picNames: string[];
+  companionNames?: string[];
   photoId: string | null;
   markerIcon: MappingMarkerIconValue;
 };
@@ -116,7 +117,8 @@ export default function AppointmentSpreadMap({
                 {item.photoId ? <img src={`/api/location-photos/${item.photoId}`} alt="Foto lokasi janji" className="mb-2 h-28 w-full rounded-lg object-cover" /> : null}
                 <strong>{item.label}</strong>
                 <p>{item.locationLabel}</p>
-                <p>PIC: {item.picNames.join(", ")}</p>
+                <p>Kendali layanan: {item.picNames.join(", ")}</p>
+                {item.companionNames?.length ? <p>Pendamping: {item.companionNames.join(", ")}</p> : null}
                 <a className="font-bold text-blue-700" href={`/work/${item.id}`}>Buka detail janji</a>
               </div>
             </Popup>

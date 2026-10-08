@@ -9,6 +9,10 @@ import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { ServiceCaseForm } from "@/components/service-case-form";
 import { ServiceCaseDeleteButton } from "@/components/service-case-delete-button";
+import {
+  AppointmentCardClockProvider,
+  AppointmentCardCountdown,
+} from "@/components/appointment-card-countdown";
 import { StatusBadge } from "@/components/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { mappingProspectScope } from "@/lib/authorization";
@@ -145,7 +149,7 @@ export default async function WorkPage({
       <PageHeader
         eyebrow="Kendali layanan"
         title="Akuisisi Nasabah"
-        description="Buat janji langsung, tentukan beberapa PIC internal, lokasi, dan waktu agar reminder dapat dipantau oleh cabang."
+        description="Pembuat janji memegang kendali layanan. Tambahkan pendamping, waktu janji WIB, dan lokasi bila tersedia."
         actions={
           <ServiceCaseForm
             officers={officers.map((officer) => ({
@@ -157,6 +161,7 @@ export default async function WorkPage({
             }))}
             savedLocations={savedLocations}
             currentUserId={actor.id}
+            currentBranchId={actor.branchId}
           />
         }
       />
@@ -224,85 +229,110 @@ export default async function WorkPage({
         </div>
       </form>
       {data.items.length ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {data.items.map((item) => (
-            <article
-              key={item.id}
-              className="card p-5 transition hover:shadow-lg"
-            >
-              <Link
-                href={`/work/${item.id}`}
-                className="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700"
+        <AppointmentCardClockProvider
+          serverNow={data.serverNow}
+          active={data.items.some(
+            (item) =>
+              item.appointmentAt &&
+              item.appointmentAt > new Date() &&
+              item.appointmentStatus === "CONFIRMED" &&
+              (item.sourceSystem !== "MABES_LINK" || item.acceptedAt) &&
+              !["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(
+                item.status,
+              ),
+          )}
+        >
+          <div className="grid gap-4 lg:grid-cols-2">
+            {data.items.map((item) => (
+              <article
+                key={item.id}
+                className="card p-5 transition hover:shadow-lg"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-mono text-xs text-blue-700">
-                      {item.code}
-                    </p>
-                    <h2 className="mt-1 font-black">{item.title}</h2>
-                    <p className="mt-1 text-xs font-semibold text-slate-500">
-                      Akuisisi Nasabah &gt;{" "}
-                      {getAcquisitionCategory(item.acquisitionCategory)
-                        ?.label ?? "Belum dikategorikan"}{" "}
-                      &gt;{" "}
-                      {getAcquisitionProduct(
-                        item.acquisitionCategory,
-                        item.acquisitionProduct,
-                      )?.label ?? "Produk belum dipilih"}
-                    </p>
+                <Link
+                  href={`/work/${item.id}`}
+                  className="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-mono text-xs text-blue-700">
+                        {item.code}
+                      </p>
+                      <h2 className="mt-1 font-black">{item.title}</h2>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        Akuisisi Nasabah &gt;{" "}
+                        {getAcquisitionCategory(item.acquisitionCategory)
+                          ?.label ?? "Belum dikategorikan"}{" "}
+                        &gt;{" "}
+                        {getAcquisitionProduct(
+                          item.acquisitionCategory,
+                          item.acquisitionProduct,
+                        )?.label ?? "Produk belum dipilih"}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-800">
+                      {acquisitionStatusLabel[item.acquisitionStatus]}
+                    </span>
                   </div>
-                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-800">
-                    {acquisitionStatusLabel[item.acquisitionStatus]}
-                  </span>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-slate-400">Kendali layanan</p>
+                      <p className="font-semibold">{item.pic.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400">
+                        Waktu janji (WIB)
+                      </p>
+                      <p className="font-semibold">
+                        {item.appointmentAt
+                          ? formatDateTime(item.appointmentAt)
+                          : "Belum dijadwalkan"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400">Target</p>
+                      <p className="font-semibold">
+                        {formatMetric(item.targetValue, item.metricUnit)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400">Realisasi</p>
+                      <p className="font-semibold text-emerald-700">
+                        {formatMetric(item.realizationValue, item.metricUnit)}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+                <AppointmentCardCountdown
+                  item={{
+                    appointmentAt: item.appointmentAt?.toISOString() ?? null,
+                    appointmentStatus: item.appointmentStatus,
+                    serviceStatus: item.status,
+                    accepted:
+                      item.sourceSystem !== "MABES_LINK" ||
+                      Boolean(item.acceptedAt),
+                    nextReminder: item.nextReminder,
+                  }}
+                />
+                <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3">
+                  <StatusBadge value={item.appointmentStatus} />
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">
+                      {item.origin === "IN_BRANCH" ? "In-branch" : "Out-branch"}
+                    </span>
+                    {actor.role === Role.ADMIN ||
+                    actor.role === Role.SUPERVISOR ||
+                    item.createdById === actor.id ? (
+                      <ServiceCaseDeleteButton
+                        id={item.id}
+                        version={item.version}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-xs text-slate-400">PIC</p>
-                    <p className="font-semibold">
-                      {Array.from(
-                        new Set(item.participants.map((row) => row.user.name)),
-                      ).join(", ") || item.pic.name}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Tindak lanjut</p>
-                    <p className="font-semibold">
-                      {formatDateTime(item.dueAt)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Target</p>
-                    <p className="font-semibold">
-                      {formatMetric(item.targetValue, item.metricUnit)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Realisasi</p>
-                    <p className="font-semibold text-emerald-700">
-                      {formatMetric(item.realizationValue, item.metricUnit)}
-                    </p>
-                  </div>
-                </div>
-              </Link>
-              <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3">
-                <StatusBadge value={item.appointmentStatus} />
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">
-                    {item.origin === "IN_BRANCH" ? "In-branch" : "Out-branch"}
-                  </span>
-                  {actor.role === Role.ADMIN ||
-                  actor.role === Role.SUPERVISOR ||
-                  item.createdById === actor.id ? (
-                    <ServiceCaseDeleteButton
-                      id={item.id}
-                      version={item.version}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
+              </article>
+            ))}
+          </div>
+        </AppointmentCardClockProvider>
       ) : (
         <EmptyState
           title="Belum ada pekerjaan"

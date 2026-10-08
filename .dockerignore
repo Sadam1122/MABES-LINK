@@ -14,3 +14,9 @@ role.md
 .data
 coverage
 npm-debug.log*
+# Operational source workbooks/backups must never be embedded in the image.
+*.xlsx
+**/*.xlsx
+*.xls
+*.dump
+*.tar.gz

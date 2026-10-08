@@ -30,9 +30,7 @@ import {
 } from "@/lib/client/notification-audio";
 
 const kinds: { key: ReminderSoundKind; label: string }[] = [
-  { key: "appointments", label: "Janji dan tindak lanjut" },
-  { key: "assignments", label: "Penugasan dan perubahan layanan" },
-  { key: "overdue", label: "Jatuh tempo dan ringkasan terlambat" },
+  { key: "appointments", label: "Alarm janji (modal pengingat)" },
 ];
 
 export function NotificationAudioSettings({
@@ -59,6 +57,16 @@ export function NotificationAudioSettings({
   const customSoundRef = useRef<StoredSound | null>(null);
 
   useEffect(() => {
+    const syncPreferences = () => {
+      const stored = loadSoundPreferences(userId);
+      setPreferences(stored);
+      getNotificationAudioManager().setVolume(
+        stored.muted || !stored.soundEnabled ? 0 : stored.volume,
+      );
+      setAudioReady(getNotificationAudioManager().state === "running");
+    };
+    window.addEventListener("storage", syncPreferences);
+    window.addEventListener(NOTIFICATION_PREFERENCES_EVENT, syncPreferences);
     const timer = window.setTimeout(() => {
       const stored = loadSoundPreferences(userId);
       setPreferences(stored);
@@ -87,13 +95,29 @@ export function NotificationAudioSettings({
         );
       }
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("storage", syncPreferences);
+      window.removeEventListener(
+        NOTIFICATION_PREFERENCES_EVENT,
+        syncPreferences,
+      );
+    };
   }, [userId]);
 
   const updatePreferences = (next: SoundPreferences) => {
     setPreferences(next);
-    saveSoundPreferences(userId, next);
-    getNotificationAudioManager().setVolume(next.muted ? 0 : next.volume);
+    try {
+      saveSoundPreferences(userId, next);
+    } catch {
+      toast(
+        "Pengaturan berlaku di tab ini, tetapi penyimpanan browser diblokir.",
+        "error",
+      );
+    }
+    getNotificationAudioManager().setVolume(
+      next.muted || !next.soundEnabled ? 0 : next.volume,
+    );
   };
 
   const activateSound = async () => {
@@ -123,14 +147,14 @@ export function NotificationAudioSettings({
   const testSound = async (urgency: ReminderAlarmUrgency = "standard") => {
     getNotificationAudioManager().stop();
     const ready = await activateSound();
-    const played = ready && getNotificationAudioManager().play(1, urgency);
+    const played = ready && getNotificationAudioManager().play(1, "standard");
     setAudioMessage(
-      !played
-        ? "Tes belum berbunyi. Periksa izin audio dan volume perangkat."
-        : preferences.muted || preferences.volume === 0
-          ? "Tes dijalankan, tetapi pengaturan saat ini mute atau volume nol."
+      preferences.muted || preferences.volume === 0
+        ? "Tes tidak dibunyikan karena mute atau volume nol."
+        : !played
+          ? "Tes belum berbunyi. Periksa izin audio dan volume perangkat."
           : urgency === "appointment-due"
-            ? "Alarm tepat waktu janji diputar dengan pola mendesak minimal lima kali."
+            ? "Alarm pengingat janji diputar satu kali."
             : "Nada pengingat awal diputar satu kali pada tab ini.",
     );
   };
@@ -274,11 +298,13 @@ export function NotificationAudioSettings({
         >
           <p className="flex items-start gap-2">
             <Info className="mt-0.5 shrink-0" size={17} />
-            Janji terkonfirmasi mengingatkan mulai 30 menit sebelumnya, berulang
-            setiap 5 menit sampai tepat pada waktunya, termasuk pada jam senyap.
-            Tepat pada waktu janji digunakan pola alarm yang berbeda, lebih
-            tegas, dan minimal lima putaran. Browser harus tetap membuka MABES
-            LINK dan audio harus pernah diaktifkan pada perangkat ini.
+            Janji terkonfirmasi diingatkan 24 jam sebelumnya, lalu 15 menit
+            (jarak maksimal 1 km) atau 1 jam sebelumnya. Lokasi belum
+            terverifikasi memakai cadangan 1 jam. Saat waktu janji tiba, alarm
+            juga berbunyi. Ingatkan lagi 1/5/10 menit memunculkan alarm baru.
+            Setiap pengingat membuka satu modal alarm; tidak diulang otomatis
+            setelah refresh. Browser harus tetap membuka MABES LINK dan audio
+            harus pernah diaktifkan pada perangkat ini.
           </p>
         </div>
 
@@ -300,25 +326,12 @@ export function NotificationAudioSettings({
             className="mt-2 h-11 w-full accent-blue-800"
           />
         </label>
-        <label className="block text-sm font-bold">
-          Pengulangan alarm
-          <select
-            className="field mt-2"
-            value={preferences.repeatCount}
-            onChange={(event) =>
-              updatePreferences({
-                ...preferences,
-                repeatCount: Number(event.target.value),
-              })
-            }
-          >
-            {[1, 3, 5, 10, 20].map((value) => (
-              <option key={value} value={value}>
-                {value} kali
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="rounded-xl bg-blue-50 p-3 text-sm text-blue-950">
+          Simpan, edit, hapus dan perubahan pekerjaan hanya menampilkan
+          notifikasi tanpa suara. Suara otomatis hanya saat modal Alarm janji
+          muncul; Matikan atau Ingatkan lagi 1/5/10 menit dari modal. Bunyi
+          maksimal 2 menit.
+        </p>
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-bold">Bunyikan untuk</legend>

@@ -342,6 +342,7 @@ model Prospect {
   locationSource         String?             @db.VarChar(32)
   mappingImportedAt      DateTime?           @db.Timestamptz(3)
   locationUpdatedAt      DateTime?           @db.Timestamptz(3)
+  locationVerifiedAt     DateTime?           @db.Timestamptz(3)
   mappingMarkerIcon      MappingMarkerIcon   @default(STORE)
   publicQrisRequestId    String?             @unique @db.VarChar(80)
   publicDedupKey         String?             @unique @db.VarChar(64)
@@ -631,6 +632,11 @@ model Notification {
   serviceCaseId String?
   serviceCase   ServiceCase?     @relation(fields: [serviceCaseId], references: [id], onDelete: Cascade)
   readAt        DateTime?        @db.Timestamptz(3)
+  popupClaimedAt DateTime?       @db.Timestamptz(3)
+  audioClaimedAt DateTime?       @db.Timestamptz(3)
+  reminderExpiresAt DateTime?    @db.Timestamptz(3)
+  alarmDismissedAt DateTime?     @db.Timestamptz(3)
+  snoozedUntil DateTime?         @db.Timestamptz(3)
   createdAt     DateTime         @default(now()) @db.Timestamptz(3)
   deliveries    EmailDelivery[]
 

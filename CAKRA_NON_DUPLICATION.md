@@ -1,6 +1,14 @@
 # Audit Non-Duplikasi CAKRA
 
-Tanggal audit kode: 6 Oktober 2026 (Asia/Jakarta)
+Tanggal audit kode: 8 Oktober 2026 (Asia/Jakarta)
+
+Audit terbaru memperbaiki UX pencarian/peta/modal, status janji, keamanan SSE,
+alarm, worker dan konfigurasi deployment pada model existing. Tidak menambah
+master leads/lokasi, scraping, deep link atau API CAKRA yang belum disetujui.
+Janji belum terkonfirmasi tetap dipisahkan dari waktu follow-up; reminder hanya
+kepada PIC internal. **Ini tidak membuktikan bahwa akuisisi, visit dan reminder
+tidak tersedia di CAKRA**. Persetujuan pemilik proses tetap dependensi operasional.
+Screenshot/guidebook memakai database UI test samaran terpisah, bukan data bank.
 
 ## Kesimpulan
 
@@ -36,7 +44,13 @@ Model bernama `Prospect` dipertahankan karena merupakan model existing dari impl
 - Tidak ditemukan kontrak API resmi, deep link yang disetujui, atau dokumentasi hak akses CAKRA di repo; karena itu tidak dibuat integrasi otomatis, pencarian CAKRA, atau tautan yang ditebak. Referensi `cakraReference` tetap opsional dan unik pada record existing. Workbook Mapping hanya memakai 14 kolom lokasi, tanpa CIF.
 - Pada 7 Oktober 2026, 42 lokasi dari workbook pengguna diimpor ke `Prospect` existing pada database lokal cabang 11539 setelah pratinjau dan konfirmasi permintaan. Semua masih `Belum dikonfirmasi`, tanpa pin dan tanpa verifikasi penggunaan; impor ini **bukan** rekonsiliasi atau sinkronisasi CAKRA. Sebelum pemakaian operasional nyata, pemilik proses perlu menentukan apakah lokasi yang sama sudah dicatat di CAKRA dan bagaimana menghindari entri ganda lintas sistem.
 - Seeder role khusus testing tidak membuat lead/prospek, visit, pipeline, atau reminder CAKRA. Seeder menolak database operasional, hanya membuat empat akun domain `.test` pada database yang namanya mengandung `test`, dan kredensialnya hanya ditulis ke `role.md` yang diabaikan Git.
-- Tidak ada seeder data bisnis, kredensial demo pada UI, integrasi, atau sinkronisasi CAKRA di repo. Fixture tes lain dibuat sementara oleh suite tes dan dibersihkan setelah pemeriksaan.
+- Tidak ada kredensial demo pada UI, integrasi, atau sinkronisasi CAKRA di repo.
+  CLI workbook lokal historis dibatasi hash/duplikasi dan bukan seed otomatis saat
+  build/start. Audit terbaru tidak menjalankannya atau mengimpor ulang data.
+  Fixture regresi dibuat pada database test dan dibersihkan; fixture guidebook
+  hanya pada database UI test terpisah, dipertahankan untuk inspeksi, dan tidak
+  boleh disalin ke operasional. Penggantian workbook 117 record historis pada
+  7 Oktober didokumentasikan di IMPLEMENTATION_STATUS; bukan sinkronisasi CAKRA.
 - ADMIN mempunyai cakupan aplikasi lintas cabang, tetapi flag ini tidak memberi akses ke CAKRA/core banking dan bukan pengganti kewenangan sistem sumber.
 
 ## Keputusan yang belum terbukti

@@ -58,7 +58,7 @@ export function AppointmentSpreadWorkspace({
     <div className="space-y-5">
       <section className="card grid gap-3 p-4 md:grid-cols-5">
         <label className="text-xs font-semibold text-slate-600">Cari janji
-          <input className="field mt-1" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Kode, toko, lokasi, atau PIC…" />
+          <input className="field mt-1" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Kode, toko, lokasi, atau kendali…" />
         </label>
         <select className="field" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter status janji">
           <option value="">Semua status</option>
@@ -67,8 +67,8 @@ export function AppointmentSpreadWorkspace({
           <option value="NEEDS_SCHEDULING">Perlu dijadwalkan</option>
           <option value="COMPLETED">Terlaksana</option>
         </select>
-        <select className="field" value={pic} onChange={(event) => setPic(event.target.value)} aria-label="Filter PIC">
-          <option value="">Semua PIC</option>
+        <select className="field" value={pic} onChange={(event) => setPic(event.target.value)} aria-label="Filter kendali layanan">
+          <option value="">Semua kendali layanan</option>
           {picOptions.map((name) => <option key={name} value={name}>{name}</option>)}
         </select>
         <select className="field" value={time} onChange={(event) => setTime(event.target.value)} aria-label="Filter waktu">
@@ -99,7 +99,8 @@ export function AppointmentSpreadWorkspace({
                 <h3 className="mt-1 flex items-center gap-2 font-bold"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-800"><MarkerGlyph icon={item.markerIcon} size={18} /></span>{item.label}</h3>
                 <p className="mt-1 text-xs text-slate-500">{item.locationLabel}</p>
                 <p className="mt-2 text-sm font-semibold">{formatDateTime(item.appointmentAt)}</p>
-                <p className="mt-1 text-xs text-slate-500">PIC: {item.picNames.join(", ")}</p>
+                <p className="mt-1 text-xs text-slate-500">Kendali layanan: {item.picNames.join(", ")}</p>
+                {item.companionNames?.length ? <p className="text-xs text-slate-500">Pendamping: {item.companionNames.join(", ")}</p> : null}
                 <Link href={`/work/${item.id}`} className={buttonVariants({ variant: "outline", size: "sm", className: "mt-3 w-full" })}>Lihat detail</Link>
               </article>
             ))}

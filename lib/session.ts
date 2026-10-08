@@ -34,7 +34,11 @@ export async function getActor(): Promise<Actor | null> {
 }
 
 export async function requireActor(): Promise<Actor> {
-  const actor = await getActor();
+  return requireActorFromHeaders(await headers());
+}
+
+export async function requireActorFromHeaders(requestHeaders: Headers): Promise<Actor> {
+  const actor = toActor(await auth.api.getSession({ headers: requestHeaders }));
   if (!actor)
     throw new AppError(
       "Sesi tidak valid atau akun nonaktif.",

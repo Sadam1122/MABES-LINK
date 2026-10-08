@@ -13,9 +13,7 @@ export default async function AppointmentMapPage() {
       item.prospect.longitude == null
     )
       return [];
-    const picNames = Array.from(
-      new Set(item.participants.map((participant) => participant.user.name)),
-    );
+    const companionNames = item.participants.filter((participant) => participant.user.id !== item.pic.id).map((participant) => participant.user.name);
     return [{
       id: item.id,
       code: item.code,
@@ -26,7 +24,8 @@ export default async function AppointmentMapPage() {
       markerIcon: item.prospect.mappingMarkerIcon,
       appointmentStatus: item.appointmentStatus,
       appointmentAt: item.appointmentAt.toISOString(),
-      picNames: picNames.length ? picNames : [item.pic.name],
+      picNames: [item.pic.name], // Existing map filter now explicitly filters service control.
+      companionNames,
       photoId: item.prospect.locationPhotos[0]?.id ?? null,
     }];
   });
@@ -35,7 +34,7 @@ export default async function AppointmentMapPage() {
       <PageHeader
         eyebrow="Geospasial akuisisi"
         title="Mapping Janji"
-        description="Lihat sebaran lokasi janji, PIC, status, dan waktu sesuai cakupan role dan cabang."
+        description="Lihat sebaran lokasi janji, kendali layanan, pendamping, status, dan waktu sesuai kewenangan cabang."
       />
       <AppointmentSpreadWorkspace
         points={points}

@@ -42,7 +42,12 @@ type PageInput = z.infer<typeof paginationSchema> & {
   overdue?: boolean;
 };
 type CreateInput = z.infer<typeof serviceCaseCreateSchema>;
-type AppointmentCreateInput = z.infer<typeof appointmentCreateSchema>;
+type AppointmentCreateInput = Omit<
+  z.infer<typeof appointmentCreateSchema>,
+  "appointmentStatus"
+> & {
+  appointmentStatus?: "NEEDS_SCHEDULING" | "PENDING_CONFIRMATION" | "CONFIRMED";
+};
 type PatchInput = z.infer<typeof serviceCasePatchSchema>;
 
 const include = {
@@ -57,6 +62,8 @@ const include = {
       locationLabel: true,
       latitude: true,
       longitude: true,
+      locationVerifiedAt: true,
+      locationUpdatedAt: true,
       productNeeds: true,
       locationPhotos: {
         select: { id: true, width: true, height: true },
@@ -91,6 +98,14 @@ export async function listServiceCases(actor: Actor, input: PageInput) {
       input.overdue
         ? {
             dueAt: { lt: new Date() },
+            OR: [
+              { sourceSystem: null },
+              { sourceSystem: { not: "MABES_LINK" } },
+              {
+                appointmentAt: { not: null },
+                appointmentStatus: { notIn: ["COMPLETED", "CANCELLED"] },
+              },
+            ],
             status: {
               notIn: [
                 ServiceCaseStatus.HANDLED,
@@ -119,7 +134,10 @@ export async function listServiceCases(actor: Actor, input: PageInput) {
               },
               {
                 prospect: {
-                  businessAlias: { contains: input.search, mode: "insensitive" },
+                  businessAlias: {
+                    contains: input.search,
+                    mode: "insensitive",
+                  },
                 },
               },
               {
@@ -140,15 +158,82 @@ export async function listServiceCases(actor: Actor, input: PageInput) {
   };
   const skip = (input.page - 1) * input.pageSize;
   const items = await db.serviceCase.findMany({
-      where,
-      include,
-      orderBy: [{ status: "asc" }, { dueAt: "asc" }],
-      skip,
-      take: input.pageSize,
+    where,
+    include,
+    orderBy: [{ status: "asc" }, { dueAt: "asc" }],
+    skip,
+    take: input.pageSize,
   });
   const total = await db.serviceCase.count({ where });
+  // Fetch only current reminder versions/recipients for already-authorized rows.
+  // Do not load all members' jobs or create an N+1 query per card.
+  const reminderScope = items
+    .filter(
+      (item) =>
+        item.appointmentStatus === "CONFIRMED" &&
+        item.appointmentAt &&
+        (item.sourceSystem !== "MABES_LINK" || item.acceptedAt) &&
+        !["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(item.status),
+    )
+    .map((item) => ({
+      serviceCaseId: item.id,
+      scheduleVersion: item.version,
+      recipientId:
+        item.picId === actor.id ||
+        item.participants.some((p) => p.userId === actor.id)
+          ? actor.id
+          : item.picId,
+    }));
+  const reminderJobs = reminderScope.length
+    ? await db.outboxJob.findMany({
+        where: {
+          type: { in: ["APPOINTMENT_PRE_DUE", "APPOINTMENT_ACTION_DUE"] },
+          status: { in: ["PENDING", "PROCESSING"] },
+          OR: reminderScope,
+        },
+        select: { id: true, serviceCaseId: true, runAt: true, payload: true },
+        orderBy: { runAt: "asc" },
+      })
+    : [];
+  const serverNow = new Date();
+  const reminders = new Map<
+    string,
+    {
+      id: string;
+      runAt: string;
+      expiresAt: string | null;
+      snoozeMinutes: number | null;
+    }
+  >();
+  for (const job of reminderJobs) {
+    const payload = job.payload as {
+      policy?: string;
+      expiresAt?: string;
+      snoozeMinutes?: number;
+    } | null;
+    if (
+      !job.serviceCaseId ||
+      reminders.has(job.serviceCaseId) ||
+      payload?.policy !== "APPOINTMENT_V2" ||
+      (payload.expiresAt &&
+        !(Date.parse(payload.expiresAt) > serverNow.getTime()))
+    )
+      continue;
+    reminders.set(job.serviceCaseId, {
+      id: job.id,
+      runAt: job.runAt.toISOString(),
+      expiresAt: payload.expiresAt ?? null,
+      snoozeMinutes: [1, 5, 10].includes(payload.snoozeMinutes ?? 0)
+        ? payload.snoozeMinutes!
+        : null,
+    });
+  }
   return {
-    items,
+    items: items.map((item) => ({
+      ...item,
+      nextReminder: reminders.get(item.id) ?? null,
+    })),
+    serverNow: serverNow.toISOString(),
     pagination: {
       page: input.page,
       pageSize: input.pageSize,
@@ -164,6 +249,21 @@ export async function getServiceCase(actor: Actor, id: string) {
     include: {
       ...include,
       notifications: { orderBy: { createdAt: "desc" }, take: 10 },
+      outboxJobs: {
+        where: {
+          type: { in: ["APPOINTMENT_PRE_DUE", "APPOINTMENT_ACTION_DUE"] },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        select: {
+          id: true,
+          recipientId: true,
+          scheduleVersion: true,
+          runAt: true,
+          status: true,
+          payload: true,
+        },
+      },
     },
   });
   if (!item)
@@ -374,15 +474,34 @@ export async function createAppointment(
   input: AppointmentCreateInput,
   requestId?: string | null,
 ) {
-  if (input.appointmentAt.getTime() <= Date.now())
+  // Preserve old API callers; the UI explicitly defaults to NEEDS_SCHEDULING.
+  const appointmentStatus =
+    input.appointmentStatus ?? AppointmentStatus.CONFIRMED;
+  if (appointmentStatus === "CONFIRMED" && !input.appointmentAt)
+    throw new AppError(
+      "Waktu janji wajib jika dikonfirmasi.",
+      422,
+      "APPOINTMENT_TIME_REQUIRED",
+    );
+  if (input.appointmentAt && input.appointmentAt.getTime() <= Date.now())
     throw new AppError(
       "Waktu janji harus berada setelah waktu sekarang.",
       422,
       "APPOINTMENT_TIME_INVALID",
     );
+  const companionIds = (input.companionIds ?? input.picIds ?? []).filter(
+    (id) => id !== actor.id,
+  );
+  const branchId = requireBranch(actor);
+  if (!branchId)
+    throw new AppError(
+      "Akun pembuat janji harus terhubung ke cabang.",
+      422,
+      "BRANCH_REQUIRED",
+    );
   const pics = await db.user.findMany({
     where: {
-      id: { in: input.picIds },
+      id: { in: companionIds },
       active: true,
       isTest: false,
       role: { in: [Role.OUT_BRANCH, Role.CS] },
@@ -390,27 +509,19 @@ export async function createAppointment(
     },
     select: { id: true, branchId: true },
   });
-  if (pics.length !== input.picIds.length)
+  if (pics.length !== companionIds.length)
     throw new AppError(
-      "Seluruh PIC harus merupakan akun CS/OUTBRANCH aktif.",
+      "Anggota pendamping harus akun CS/OUTBRANCH aktif.",
       422,
       "INVALID_ASSIGNEE",
     );
-  const branchIds = new Set(pics.map((pic) => pic.branchId));
-  if (branchIds.size !== 1)
+  if (pics.some((pic) => pic.branchId !== branchId))
     throw new AppError(
-      "Seluruh PIC harus berada pada cabang yang sama.",
-      422,
+      "Anggota pendamping harus berada pada cabang pembuat janji.",
+      403,
       "INVALID_ASSIGNEE_BRANCH",
     );
-  const branchId = pics[0].branchId!;
-  if (actor.role !== Role.ADMIN && actor.branchId !== branchId)
-    throw new AppError(
-      "PIC berada di luar cabang Anda.",
-      403,
-      "FORBIDDEN",
-    );
-  const primaryPicId = input.picIds[0];
+  const primaryPicId = actor.id;
   const category = getAcquisitionCategory(input.acquisitionCategory);
   const product = getAcquisitionProduct(
     input.acquisitionCategory,
@@ -424,6 +535,7 @@ export async function createAppointment(
     );
 
   return db.$transaction(async (tx) => {
+    const now = new Date();
     const internalCode = makeCode("PR-11539");
     const prospect = await tx.prospect.create({
       data: {
@@ -439,7 +551,8 @@ export async function createAppointment(
         longitude: input.longitude,
         locationSource: input.locationSource,
         mappingMarkerIcon: input.mappingMarkerIcon,
-        locationUpdatedAt: new Date(),
+        locationUpdatedAt: now,
+        locationVerifiedAt: input.locationVerified ? now : null,
         productNeeds: [product.label],
       },
     });
@@ -455,9 +568,9 @@ export async function createAppointment(
         picId: primaryPicId,
         createdById: actor.id,
         nextAction: input.nextAction,
-        dueAt: input.appointmentAt,
-        appointmentStatus: AppointmentStatus.CONFIRMED,
-        appointmentAt: input.appointmentAt,
+        dueAt: input.appointmentAt ?? now, // Legacy internal deadline, not a second appointment input.
+        appointmentStatus,
+        appointmentAt: input.appointmentAt ?? null,
         sourceSystem: "MABES_LINK",
         acquisitionCategory: category.id,
         acquisitionProduct: product.id,
@@ -471,17 +584,20 @@ export async function createAppointment(
       },
     });
     await tx.serviceCaseParticipant.createMany({
-      data: input.picIds.map((userId) => ({ serviceCaseId: item.id, userId })),
+      data: [actor.id, ...companionIds].map((userId) => ({
+        serviceCaseId: item.id,
+        userId,
+      })),
       skipDuplicates: true,
     });
     await scheduleServiceCaseJobs(tx, item, branchId);
-    for (const recipientId of input.picIds) {
+    for (const recipientId of [actor.id, ...companionIds]) {
       await createAssignmentNotification(tx, {
         recipientId,
         branchId,
         type: "SERVICE_ASSIGNMENT",
         title: "Janji akuisisi baru",
-        message: `${item.code} ditugaskan kepada Anda sebagai PIC internal.`,
+        message: `${item.code}: Anda ${recipientId === actor.id ? "memegang kendali layanan" : "menjadi anggota pendamping/pengganti"}.`,
         link: `/work/${item.id}`,
         dedupKey: `service-assignment:${item.id}:${recipientId}:v${item.version}`,
         serviceCaseId: item.id,
@@ -492,7 +608,11 @@ export async function createAppointment(
       entityId: prospect.id,
       action: "APPOINTMENT_PROSPECT_CREATED",
       branchId,
-      after: { internalCode, assignedToId: primaryPicId, mappingMarkerIcon: input.mappingMarkerIcon },
+      after: {
+        internalCode,
+        assignedToId: primaryPicId,
+        mappingMarkerIcon: input.mappingMarkerIcon,
+      },
       requestId,
     });
     await writeAudit(tx, actor, {
@@ -503,7 +623,9 @@ export async function createAppointment(
       after: {
         code: item.code,
         appointmentStatus: item.appointmentStatus,
-        participantIds: input.picIds,
+        ownerId: actor.id,
+        companionIds,
+        locationVerified: Boolean(input.locationVerified),
         acquisitionCategory: category.id,
         acquisitionProduct: product.id,
         acquisitionStatus: item.acquisitionStatus,
@@ -561,8 +683,40 @@ export async function updateServiceCase(
         "FORBIDDEN",
       );
   }
+  if (input.takeControl) {
+    if (["HANDLED", "VERIFIED", "CLOSED", "CANCELLED"].includes(current.status))
+      throw new AppError(
+        "Pekerjaan sudah selesai atau dibatalkan.",
+        422,
+        "INVALID_TRANSITION",
+      );
+    const member = await db.serviceCaseParticipant.findUnique({
+      where: { serviceCaseId_userId: { serviceCaseId: id, userId: actor.id } },
+    });
+    if (
+      !member ||
+      actor.branchId !== current.branchId ||
+      ![Role.CS, Role.OUT_BRANCH].includes(actor.role as "CS" | "OUT_BRANCH")
+    )
+      throw new AppError(
+        "Hanya anggota pendamping aktif di cabang ini dapat mengambil alih.",
+        403,
+        "FORBIDDEN",
+      );
+    if (input.picId && input.picId !== actor.id)
+      throw new AppError(
+        "Pengambilalihan hanya untuk diri sendiri.",
+        403,
+        "FORBIDDEN",
+      );
+    input = { ...input, picId: actor.id };
+  }
   if (input.picId && input.picId !== current.picId) {
-    if (actor.role !== Role.SUPERVISOR && actor.role !== Role.ADMIN)
+    if (
+      !input.takeControl &&
+      actor.role !== Role.SUPERVISOR &&
+      actor.role !== Role.ADMIN
+    )
       throw new AppError(
         "Pergantian PIC memerlukan supervisor.",
         403,
@@ -578,12 +732,49 @@ export async function updateServiceCase(
     });
     if (!pic) throw new AppError("PIC tidak valid.", 422, "INVALID_ASSIGNEE");
   }
+  // Accepting an acquisition appointment is an explicit acknowledgement of its
+  // recorded time. Do not invent a time or activate reminders before acceptance.
+  if (current.sourceSystem === "MABES_LINK" && input.status === "ACCEPTED") {
+    const time =
+      input.appointmentAt !== undefined
+        ? input.appointmentAt
+        : current.appointmentAt;
+    if (!time || time <= new Date())
+      throw new AppError(
+        "Isi waktu janji (WIB) di masa depan sebelum menerima pekerjaan.",
+        422,
+        "APPOINTMENT_TIME_REQUIRED",
+      );
+    if (
+      ["CANCELLED", "COMPLETED"].includes(current.appointmentStatus) &&
+      !input.appointmentStatus
+    )
+      throw new AppError(
+        "Jadwalkan kembali janji sebelum menerima pekerjaan.",
+        422,
+        "INVALID_TRANSITION",
+      );
+    input = { ...input, appointmentStatus: "CONFIRMED" };
+  }
   const targetAppointmentStatus =
     input.appointmentStatus ?? current.appointmentStatus;
   const targetAppointmentAt =
     input.appointmentAt !== undefined
       ? input.appointmentAt
       : current.appointmentAt;
+  if (
+    targetAppointmentStatus === "CONFIRMED" &&
+    targetAppointmentAt &&
+    (input.appointmentAt !== undefined ||
+      (input.appointmentStatus === "CONFIRMED" &&
+        current.appointmentStatus !== "CONFIRMED")) &&
+    targetAppointmentAt <= new Date()
+  )
+    throw new AppError(
+      "Waktu janji terkonfirmasi harus di masa depan.",
+      422,
+      "APPOINTMENT_TIME_INVALID",
+    );
   if (
     targetAppointmentStatus === AppointmentStatus.CONFIRMED &&
     !targetAppointmentAt
@@ -620,7 +811,10 @@ export async function updateServiceCase(
         status: input.status,
         picId: input.picId,
         nextAction: input.nextAction,
-        dueAt: input.dueAt,
+        dueAt:
+          current.sourceSystem === "MABES_LINK"
+            ? (targetAppointmentAt ?? undefined)
+            : input.dueAt,
         appointmentStatus: input.appointmentStatus,
         appointmentAt: input.appointmentAt,
         waitReason: input.waitReason,
@@ -653,11 +847,15 @@ export async function updateServiceCase(
       );
     const updated = await tx.serviceCase.findUniqueOrThrow({ where: { id } });
     if (input.picId && input.picId !== current.picId) {
-      await tx.serviceCaseParticipant.deleteMany({
-        where: { serviceCaseId: id, userId: current.picId },
-      });
+      // The former owner remains a companion; takeover is explicitly audited.
+      if (current.sourceSystem !== "MABES_LINK" && !input.takeControl)
+        await tx.serviceCaseParticipant.deleteMany({
+          where: { serviceCaseId: id, userId: current.picId },
+        });
       await tx.serviceCaseParticipant.upsert({
-        where: { serviceCaseId_userId: { serviceCaseId: id, userId: input.picId } },
+        where: {
+          serviceCaseId_userId: { serviceCaseId: id, userId: input.picId },
+        },
         create: { serviceCaseId: id, userId: input.picId },
         update: {},
       });
@@ -720,12 +918,15 @@ export async function updateServiceCase(
         picId: current.picId,
         dueAt: current.dueAt.toISOString(),
         appointmentStatus: current.appointmentStatus,
+        appointmentAt: current.appointmentAt?.toISOString() ?? null,
       },
       after: {
         status: updated.status,
         picId: updated.picId,
         dueAt: updated.dueAt.toISOString(),
         appointmentStatus: updated.appointmentStatus,
+        appointmentAt: updated.appointmentAt?.toISOString() ?? null,
+        takeoverByCompanion: Boolean(input.takeControl),
       },
       requestId,
     });
@@ -786,7 +987,10 @@ export async function archiveServiceCase(
       action: "SERVICE_CASE_ARCHIVED",
       branchId: current.branchId,
       before: { status: current.status, deletedAt: null },
-      after: { status: ServiceCaseStatus.CANCELLED, deletedAt: new Date().toISOString() },
+      after: {
+        status: ServiceCaseStatus.CANCELLED,
+        deletedAt: new Date().toISOString(),
+      },
       requestId,
     });
     return { id, archived: true };

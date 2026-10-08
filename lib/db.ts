@@ -9,7 +9,9 @@ function createPrismaClient() {
 
   return new PrismaClient({
     adapter: new PrismaPg({ connectionString }),
-    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+    // Prisma's raw error logger may print mutation payloads. Routes/worker emit
+    // sanitized error categories instead; never log customer fields or secrets.
+    log: [],
   });
 }
 

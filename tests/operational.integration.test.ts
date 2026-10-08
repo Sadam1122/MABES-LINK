@@ -17,7 +17,13 @@ import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/lib/db";
-import { commitMappingImport, exportWorkbook, parseMappingWorkbook, planMappingImport, templateWorkbook } from "@/lib/mapping-excel";
+import {
+  commitMappingImport,
+  exportWorkbook,
+  parseMappingWorkbook,
+  planMappingImport,
+  templateWorkbook,
+} from "@/lib/mapping-excel";
 import {
   geolocationErrorMessage,
   googleMapsLocationUrl,
@@ -47,7 +53,11 @@ import {
   createMappingLocation,
   updateMappingLocation,
 } from "@/lib/services/mapping";
-import { getMappingDiscovery, saveMappingDiscovery, saveMappingOpportunity } from "@/lib/services/mapping-discovery";
+import {
+  getMappingDiscovery,
+  saveMappingDiscovery,
+  saveMappingOpportunity,
+} from "@/lib/services/mapping-discovery";
 import { listMappingProspects } from "@/lib/services/visits";
 import { updateProspect } from "@/lib/services/prospects";
 import { prospectPatchSchema } from "@/lib/validation";
@@ -92,7 +102,10 @@ const supervisor: Actor = {
 const caseIds: string[] = [];
 const createdProspectIds: string[] = [];
 const photoIds: string[] = [];
-const suppliedWorkbook = path.join(process.cwd(), "link_mapping_6_Oktober_2026_REVISI.xlsx");
+const suppliedWorkbook = path.join(
+  process.cwd(),
+  "link_mapping_6_Oktober_2026_REVISI.xlsx",
+);
 
 describe("operasional ServiceCase, lokasi, dan storage privat", () => {
   beforeAll(async () => {
@@ -152,7 +165,9 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     });
     await db.locationPhoto.deleteMany({ where: { prospectId } });
     await db.serviceCase.deleteMany({ where: { id: { in: caseIds } } });
-    await db.auditLog.deleteMany({ where: { branchId: { in: [branchId, otherBranchId] } } });
+    await db.auditLog.deleteMany({
+      where: { branchId: { in: [branchId, otherBranchId] } },
+    });
     await db.usageVerification.deleteMany({
       where: { prospectId: { in: createdProspectIds } },
     });
@@ -234,8 +249,12 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     );
     expect(location.searchParams.get("api")).toBe("1");
     expect(location.searchParams.get("query")).toBe("-6.1501234,106.8205678");
-    const addressSearch = new URL(googleMapsAddressSearchUrl("Jl. Mangga Besar No. 10, Jakarta"));
-    expect(addressSearch.searchParams.get("query")).toBe("Jl. Mangga Besar No. 10, Jakarta");
+    const addressSearch = new URL(
+      googleMapsAddressSearchUrl("Jl. Mangga Besar No. 10, Jakarta"),
+    );
+    expect(addressSearch.searchParams.get("query")).toBe(
+      "Jl. Mangga Besar No. 10, Jakarta",
+    );
     expect(addressSearch.searchParams.get("api")).toBe("1");
     const navigation = new URL(
       googleMapsNavigationUrl({
@@ -261,74 +280,236 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
   it("template Excel mengimpor lokasi tanpa memverifikasi penggunaan, menolak lintas cabang, dan menjaga versi", async () => {
     const template = await templateWorkbook();
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(Buffer.from(template) as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+    await workbook.xlsx.load(
+      Buffer.from(template) as unknown as Parameters<
+        typeof workbook.xlsx.load
+      >[0],
+    );
     const sheet = workbook.getWorksheet("Mapping")!;
     expect(sheet.rowCount).toBe(1);
-    expect(workbook.getWorksheet("Contoh")?.getCell("D4").value).toBe("Kedai Contoh Samaran");
+    expect(workbook.getWorksheet("Contoh")?.getCell("D4").value).toBe(
+      "Kedai Contoh Samaran",
+    );
     expect(workbook.getWorksheet("Contoh")?.getCell("F4").value).toBeNull();
-    expect(workbook.getWorksheet("Pilihan Ikon")?.getCell("A9").value).toBe("CAFE");
-    expect(workbook.getWorksheet("Pilihan Ikon")?.getCell("B9").value).toBe("☕");
-    expect(workbook.getWorksheet("Petunjuk")?.getCell("A2").value).toBe("HIJAU · WAJIB");
-    expect(sheet.getCell("D1").fill).toMatchObject({ fgColor: { argb: "FF047857" } });
-    expect(sheet.getCell("F1").fill).toMatchObject({ fgColor: { argb: "FF245A91" } });
-    expect((await parseMappingWorkbook(new File([Buffer.from(template)], "template.xlsx"))).rows).toHaveLength(0);
-    sheet.addRow(["", "", `O${suffix}`, "Toko Samaran Excel", "Titik impor", 0, 0,
-      actorA.email, "Blok Uji", "Ritel", "Sebelah pasar", "QRIS; EDC", "", "CAFE"]);
-    const file = new File([Buffer.from(await workbook.xlsx.writeBuffer())], "mapping.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    expect(workbook.getWorksheet("Pilihan Ikon")?.getCell("A9").value).toBe(
+      "CAFE",
+    );
+    expect(workbook.getWorksheet("Pilihan Ikon")?.getCell("B9").value).toBe(
+      "☕",
+    );
+    expect(workbook.getWorksheet("Petunjuk")?.getCell("A2").value).toBe(
+      "HIJAU · WAJIB",
+    );
+    expect(sheet.getCell("D1").fill).toMatchObject({
+      fgColor: { argb: "FF047857" },
+    });
+    expect(sheet.getCell("F1").fill).toMatchObject({
+      fgColor: { argb: "FF245A91" },
+    });
+    expect(
+      (
+        await parseMappingWorkbook(
+          new File([Buffer.from(template)], "template.xlsx"),
+        )
+      ).rows,
+    ).toHaveLength(0);
+    sheet.addRow([
+      "",
+      "",
+      `O${suffix}`,
+      "Toko Samaran Excel",
+      "Titik impor",
+      0,
+      0,
+      actorA.email,
+      "Blok Uji",
+      "Ritel",
+      "Sebelah pasar",
+      "QRIS; EDC",
+      "",
+      "CAFE",
+    ]);
+    const file = new File(
+      [Buffer.from(await workbook.xlsx.writeBuffer())],
+      "mapping.xlsx",
+      {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    );
     const preview = await planMappingImport(actorA, file);
-    expect(preview.summary).toEqual({ total: 1, create: 1, update: 0, invalid: 0 });
-    expect((await planMappingImport(actorOtherBranch, file)).summary.invalid).toBe(1);
+    expect(preview.summary).toEqual({
+      total: 1,
+      create: 1,
+      update: 0,
+      invalid: 0,
+    });
+    expect(
+      (await planMappingImport(actorOtherBranch, file)).summary.invalid,
+    ).toBe(1);
     await commitMappingImport(actorA, file);
-    const created = await db.prospect.findFirstOrThrow({ where: { branchId, businessAlias: "Toko Samaran Excel" }, include: { usageVerifications: true } });
+    const created = await db.prospect.findFirstOrThrow({
+      where: { branchId, businessAlias: "Toko Samaran Excel" },
+      include: { usageVerifications: true },
+    });
     createdProspectIds.push(created.id);
     expect(created.latitude?.toString()).toBe("0");
     expect(created.longitude?.toString()).toBe("0");
     expect(created.locationSource).toBe("WORKBOOK_UNVERIFIED");
     expect(created.usageVerifications).toHaveLength(0);
-    expect(await db.notification.count({ where: { recipientId: actorA.id, dedupKey: `mapping-import-created:${created.id}` } })).toBe(1);
+    expect(
+      await db.notification.count({
+        where: {
+          recipientId: actorA.id,
+          dedupKey: `mapping-import-created:${created.id}`,
+        },
+      }),
+    ).toBe(1);
     expect((await planMappingImport(actorA, file)).summary.invalid).toBe(1);
     const exported = new ExcelJS.Workbook();
-    await exported.xlsx.load(Buffer.from(await exportWorkbook(actorA)) as unknown as Parameters<typeof exported.xlsx.load>[0]);
-    expect(exported.getWorksheet("Mapping")!.getColumn(1).values).toContain(created.internalCode);
+    await exported.xlsx.load(
+      Buffer.from(await exportWorkbook(actorA)) as unknown as Parameters<
+        typeof exported.xlsx.load
+      >[0],
+    );
+    expect(exported.getWorksheet("Mapping")!.getColumn(1).values).toContain(
+      created.internalCode,
+    );
     const otherExport = new ExcelJS.Workbook();
-    await otherExport.xlsx.load(Buffer.from(await exportWorkbook(actorOtherBranch)) as unknown as Parameters<typeof otherExport.xlsx.load>[0]);
-    expect(otherExport.getWorksheet("Mapping")!.getColumn(1).values).not.toContain(created.internalCode);
+    await otherExport.xlsx.load(
+      Buffer.from(
+        await exportWorkbook(actorOtherBranch),
+      ) as unknown as Parameters<typeof otherExport.xlsx.load>[0],
+    );
+    expect(
+      otherExport.getWorksheet("Mapping")!.getColumn(1).values,
+    ).not.toContain(created.internalCode);
     const updateBook = new ExcelJS.Workbook();
-    await updateBook.xlsx.load(Buffer.from(template) as unknown as Parameters<typeof updateBook.xlsx.load>[0]);
-    updateBook.getWorksheet("Mapping")!.addRow([created.internalCode, created.version, `O${suffix}`, "", "Titik diperbarui", 0, 0, "", "", "", "", "", "", ""]);
-    const updateFile = new File([Buffer.from(await updateBook.xlsx.writeBuffer())], "update.xlsx");
-    expect((await planMappingImport(actorA, updateFile)).summary.update).toBe(1);
+    await updateBook.xlsx.load(
+      Buffer.from(template) as unknown as Parameters<
+        typeof updateBook.xlsx.load
+      >[0],
+    );
+    updateBook
+      .getWorksheet("Mapping")!
+      .addRow([
+        created.internalCode,
+        created.version,
+        `O${suffix}`,
+        "",
+        "Titik diperbarui",
+        0,
+        0,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ]);
+    const updateFile = new File(
+      [Buffer.from(await updateBook.xlsx.writeBuffer())],
+      "update.xlsx",
+    );
+    expect((await planMappingImport(actorA, updateFile)).summary.update).toBe(
+      1,
+    );
     await commitMappingImport(actorA, updateFile);
-    expect((await planMappingImport(actorA, updateFile)).summary.invalid).toBe(1);
-    const afterUpdate = await db.prospect.findUniqueOrThrow({ where: { id: created.id } });
+    expect((await planMappingImport(actorA, updateFile)).summary.invalid).toBe(
+      1,
+    );
+    const afterUpdate = await db.prospect.findUniqueOrThrow({
+      where: { id: created.id },
+    });
     expect(afterUpdate.locationLabel).toBe("Titik diperbarui");
     expect(afterUpdate.areaBlock).toBe("Blok Uji");
     expect(afterUpdate.mappingMarkerIcon).toBe("CAFE");
     const invalidBook = new ExcelJS.Workbook();
-    await invalidBook.xlsx.load(Buffer.from(template) as unknown as Parameters<typeof invalidBook.xlsx.load>[0]);
+    await invalidBook.xlsx.load(
+      Buffer.from(template) as unknown as Parameters<
+        typeof invalidBook.xlsx.load
+      >[0],
+    );
     const invalid = invalidBook.getWorksheet("Mapping")!;
     invalid.addRow(["", "", `O${suffix}`, "Bad", "", 91, 0, actorA.email]);
-    invalid.addRow(["", "", `O${suffix}`, { formula: "1+1", result: 2 }, "", -6.15, 106.8, actorA.email]);
-    const invalidFile = new File([Buffer.from(await invalidBook.xlsx.writeBuffer())], "invalid.xlsx");
+    invalid.addRow([
+      "",
+      "",
+      `O${suffix}`,
+      { formula: "1+1", result: 2 },
+      "",
+      -6.15,
+      106.8,
+      actorA.email,
+    ]);
+    const invalidFile = new File(
+      [Buffer.from(await invalidBook.xlsx.writeBuffer())],
+      "invalid.xlsx",
+    );
     expect((await parseMappingWorkbook(invalidFile)).errors).toHaveLength(2);
 
     const noPinBook = new ExcelJS.Workbook();
-    await noPinBook.xlsx.load(Buffer.from(template) as unknown as Parameters<typeof noPinBook.xlsx.load>[0]);
-    noPinBook.getWorksheet("Mapping")!.addRow(["", "", "", `Toko Tanpa Pin ${suffix}`, "", "", "", "", "", "", "", "", "", "CAFE"]);
-    const noPinFile = new File([Buffer.from(await noPinBook.xlsx.writeBuffer())], "tanpa-pin.xlsx");
-    expect((await planMappingImport(actorA, noPinFile)).summary).toEqual({ total: 1, create: 1, update: 0, invalid: 0 });
+    await noPinBook.xlsx.load(
+      Buffer.from(template) as unknown as Parameters<
+        typeof noPinBook.xlsx.load
+      >[0],
+    );
+    noPinBook
+      .getWorksheet("Mapping")!
+      .addRow([
+        "",
+        "",
+        "",
+        `Toko Tanpa Pin ${suffix}`,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "CAFE",
+      ]);
+    const noPinFile = new File(
+      [Buffer.from(await noPinBook.xlsx.writeBuffer())],
+      "tanpa-pin.xlsx",
+    );
+    expect((await planMappingImport(actorA, noPinFile)).summary).toEqual({
+      total: 1,
+      create: 1,
+      update: 0,
+      invalid: 0,
+    });
     await commitMappingImport(actorA, noPinFile);
-    const noPin = await db.prospect.findFirstOrThrow({ where: { branchId, businessAlias: `Toko Tanpa Pin ${suffix}` } });
+    const noPin = await db.prospect.findFirstOrThrow({
+      where: { branchId, businessAlias: `Toko Tanpa Pin ${suffix}` },
+    });
     createdProspectIds.push(noPin.id);
     expect(noPin.latitude).toBeNull();
     expect(noPin.longitude).toBeNull();
     expect(noPin.mappingImportedAt).not.toBeNull();
-    expect((await listMappingProspects(actorA, { page: 1, pageSize: 100 })).items.some((item) => item.id === noPin.id)).toBe(true);
-    expect((await planMappingImport(actorA, noPinFile)).summary.invalid).toBe(1);
-    await updateMappingLocation(actorA, noPin.id, { version: noPin.version,
-      latitude: -6.145, longitude: 106.818, locationLabel: "Titik ditemukan",
-      locationSource: "MAP_PIN" });
-    expect((await listMappingProspects(actorA, { page: 1, pageSize: 100 })).items.some((item) => item.id === noPin.id)).toBe(true);
+    expect(
+      (
+        await listMappingProspects(actorA, { page: 1, pageSize: 100 })
+      ).items.some((item) => item.id === noPin.id),
+    ).toBe(true);
+    expect((await planMappingImport(actorA, noPinFile)).summary.invalid).toBe(
+      1,
+    );
+    await updateMappingLocation(actorA, noPin.id, {
+      version: noPin.version,
+      latitude: -6.145,
+      longitude: 106.818,
+      locationLabel: "Titik ditemukan",
+      locationSource: "MAP_PIN",
+    });
+    expect(
+      (
+        await listMappingProspects(actorA, { page: 1, pageSize: 100 })
+      ).items.some((item) => item.id === noPin.id),
+    ).toBe(true);
   });
 
   it("menambah lokasi prospek tanpa memverifikasi penggunaan dan menolak PIC lintas cabang", async () => {
@@ -352,8 +533,12 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     expect(mapped.branchId).toBe(branchId);
     expect(mapped.contactPic).toBe("Tidak dicantumkan");
     expect(mapped.need).toBe("Belum dikonfirmasi");
-    expect(await db.usageVerification.count({ where: { prospectId: mapped.id } })).toBe(0);
-    expect(await db.mappingDiscovery.count({ where: { prospectId: mapped.id } })).toBe(1);
+    expect(
+      await db.usageVerification.count({ where: { prospectId: mapped.id } }),
+    ).toBe(0);
+    expect(
+      await db.mappingDiscovery.count({ where: { prospectId: mapped.id } }),
+    ).toBe(1);
     await expect(
       createMappingLocation(actorOtherBranch, {
         businessAlias: "Tidak Boleh Tersimpan",
@@ -373,62 +558,153 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     ).rejects.toMatchObject({ code: "INVALID_ASSIGNEE" });
   });
 
-  it.skipIf(!existsSync(suppliedWorkbook))("merencanakan impor 42 baris workbook revisi tanpa menulis data", async () => {
-    const file = new File([readFileSync(suppliedWorkbook)], "link_mapping_6_Oktober_2026_REVISI.xlsx");
-    const plan = await planMappingImport(actorA, file);
-    expect(plan.summary).toEqual({ total: 42, create: 42, update: 0, invalid: 0 });
-  });
+  it.skipIf(!existsSync(suppliedWorkbook))(
+    "merencanakan impor 42 baris workbook revisi tanpa menulis data",
+    async () => {
+      const file = new File(
+        [readFileSync(suppliedWorkbook)],
+        "link_mapping_6_Oktober_2026_REVISI.xlsx",
+      );
+      const plan = await planMappingImport(actorA, file);
+      expect(plan.summary).toEqual({
+        total: 42,
+        create: 42,
+        update: 0,
+        invalid: 0,
+      });
+    },
+  );
 
   it("membatasi discovery per PIC dan membatalkan reminder ketika respons berubah", async () => {
     const previousApproval = process.env.MAPPING_APPROVED_PRODUCT_CODES;
     process.env.MAPPING_APPROVED_PRODUCT_CODES = "LIVIN_MERCHANT_QRIS";
     let taskId: string | null = null;
     try {
-      await expect(getMappingDiscovery(actorOtherBranch, prospectId)).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(
+        getMappingDiscovery(actorOtherBranch, prospectId),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
       const profile = {
-        version: 0, segments: ["PEMBISNIS" as const], opportunityTags: ["LIVIN_MERCHANT_QRIS" as const],
-        usedProductsKnown: false, usedProducts: [], usedProductsOther: null, sourceType: "FIELD_DISCOVERY" as const,
-        sourceUrl: null, sourceCheckedAt: null, riskReviewRequired: false, foodRule: "EITHER" as const,
-        gofoodRating: null, gofoodReviews: null, gofoodUrl: null, gofoodCheckedAt: null,
-        grabfoodRating: null, grabfoodReviews: null, grabfoodUrl: null, grabfoodCheckedAt: null,
+        version: 0,
+        segments: ["PEMBISNIS" as const],
+        opportunityTags: ["LIVIN_MERCHANT_QRIS" as const],
+        usedProductsKnown: false,
+        usedProducts: [],
+        usedProductsOther: null,
+        sourceType: "FIELD_DISCOVERY" as const,
+        sourceUrl: null,
+        sourceCheckedAt: null,
+        riskReviewRequired: false,
+        foodRule: "EITHER" as const,
+        gofoodRating: null,
+        gofoodReviews: null,
+        gofoodUrl: null,
+        gofoodCheckedAt: null,
+        grabfoodRating: null,
+        grabfoodReviews: null,
+        grabfoodUrl: null,
+        grabfoodCheckedAt: null,
       };
-      await expect(saveMappingDiscovery(actorB, prospectId, profile)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(
+        saveMappingDiscovery(actorB, prospectId, profile),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
       await saveMappingDiscovery(actorA, prospectId, profile);
       const dueAt = new Date(Date.now() + 3_600_000);
       const opportunity = await saveMappingOpportunity(actorA, prospectId, {
-        productCode: "LIVIN_MERCHANT_QRIS", needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
-        discoveryDone: true, needConfirmed: true, benefitExplained: true,
-        response: "FOLLOW_UP", followUpConsent: true, nextAction: "Hubungi PIC untuk tindak lanjut",
-        dueAt, evidenceNote: "Diskusi usaha pada kunjungan uji", assignedToId: actorA.id, version: 0,
+        productCode: "LIVIN_MERCHANT_QRIS",
+        needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
+        discoveryDone: true,
+        needConfirmed: true,
+        benefitExplained: true,
+        response: "FOLLOW_UP",
+        followUpConsent: true,
+        nextAction: "Hubungi PIC untuk tindak lanjut",
+        dueAt,
+        evidenceNote: "Diskusi usaha pada kunjungan uji",
+        assignedToId: actorA.id,
+        version: 0,
       });
       taskId = opportunity.followUpId;
       expect(taskId).toBeTruthy();
-      expect(await db.outboxJob.count({ where: { followUpId: taskId!, status: "PENDING" } })).toBe(2);
-      await expect(saveMappingOpportunity(actorB, prospectId, {
-        productCode: "LIVIN_MERCHANT_QRIS", needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
-        discoveryDone: true, needConfirmed: true, benefitExplained: true,
-        response: "NOT_INTERESTED", followUpConsent: false, nextAction: null, dueAt: null,
-        evidenceNote: "Diskusi uji", assignedToId: actorB.id, version: opportunity.version,
-      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(
+        await db.outboxJob.count({
+          where: { followUpId: taskId!, status: "PENDING" },
+        }),
+      ).toBe(2);
+      await expect(
+        saveMappingOpportunity(actorB, prospectId, {
+          productCode: "LIVIN_MERCHANT_QRIS",
+          needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
+          discoveryDone: true,
+          needConfirmed: true,
+          benefitExplained: true,
+          response: "NOT_INTERESTED",
+          followUpConsent: false,
+          nextAction: null,
+          dueAt: null,
+          evidenceNote: "Diskusi uji",
+          assignedToId: actorB.id,
+          version: opportunity.version,
+        }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
       const reassigned = await saveMappingOpportunity(supervisor, prospectId, {
-        productCode: "LIVIN_MERCHANT_QRIS", needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
-        discoveryDone: true, needConfirmed: true, benefitExplained: true,
-        response: "FOLLOW_UP", followUpConsent: true, nextAction: "PIC baru menghubungi usaha",
-        dueAt: new Date(dueAt.getTime() + 3_600_000), evidenceNote: "Pergantian PIC sesuai penugasan uji",
-        assignedToId: actorB.id, version: opportunity.version,
+        productCode: "LIVIN_MERCHANT_QRIS",
+        needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
+        discoveryDone: true,
+        needConfirmed: true,
+        benefitExplained: true,
+        response: "FOLLOW_UP",
+        followUpConsent: true,
+        nextAction: "PIC baru menghubungi usaha",
+        dueAt: new Date(dueAt.getTime() + 3_600_000),
+        evidenceNote: "Pergantian PIC sesuai penugasan uji",
+        assignedToId: actorB.id,
+        version: opportunity.version,
       });
-      expect(await db.outboxJob.count({ where: { followUpId: taskId!, status: "CANCELLED" } })).toBe(2);
-      expect(await db.outboxJob.count({ where: { followUpId: taskId!, status: "PENDING", recipientId: actorB.id } })).toBe(2);
-      expect(await db.notification.count({ where: { followUpId: taskId!, recipientId: actorB.id } })).toBeGreaterThan(0);
+      expect(
+        await db.outboxJob.count({
+          where: { followUpId: taskId!, status: "CANCELLED" },
+        }),
+      ).toBe(2);
+      expect(
+        await db.outboxJob.count({
+          where: {
+            followUpId: taskId!,
+            status: "PENDING",
+            recipientId: actorB.id,
+          },
+        }),
+      ).toBe(2);
+      expect(
+        await db.notification.count({
+          where: { followUpId: taskId!, recipientId: actorB.id },
+        }),
+      ).toBeGreaterThan(0);
       await saveMappingOpportunity(supervisor, prospectId, {
-        productCode: "LIVIN_MERCHANT_QRIS", needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
-        discoveryDone: true, needConfirmed: true, benefitExplained: true,
-        response: "NOT_INTERESTED", followUpConsent: false, nextAction: null, dueAt: null,
-        evidenceNote: "Calon nasabah tidak berminat pada diskusi lanjutan", assignedToId: actorB.id, version: reassigned.version,
+        productCode: "LIVIN_MERCHANT_QRIS",
+        needSummary: "Usaha menyatakan perlu menerima pembayaran QRIS",
+        discoveryDone: true,
+        needConfirmed: true,
+        benefitExplained: true,
+        response: "NOT_INTERESTED",
+        followUpConsent: false,
+        nextAction: null,
+        dueAt: null,
+        evidenceNote: "Calon nasabah tidak berminat pada diskusi lanjutan",
+        assignedToId: actorB.id,
+        version: reassigned.version,
       });
-      expect((await db.followUp.findUniqueOrThrow({ where: { id: taskId! } })).status).toBe("CANCELLED");
-      expect(await db.outboxJob.count({ where: { followUpId: taskId!, status: "PENDING" } })).toBe(0);
-      expect(await db.usageVerification.count({ where: { prospectId } })).toBe(0);
+      expect(
+        (await db.followUp.findUniqueOrThrow({ where: { id: taskId! } }))
+          .status,
+      ).toBe("CANCELLED");
+      expect(
+        await db.outboxJob.count({
+          where: { followUpId: taskId!, status: "PENDING" },
+        }),
+      ).toBe(0);
+      expect(await db.usageVerification.count({ where: { prospectId } })).toBe(
+        0,
+      );
     } finally {
       if (taskId) {
         await db.notification.deleteMany({ where: { followUpId: taskId } });
@@ -437,7 +713,8 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
         await db.followUp.deleteMany({ where: { id: taskId } });
       }
       await db.mappingDiscovery.deleteMany({ where: { prospectId } });
-      if (previousApproval == null) delete process.env.MAPPING_APPROVED_PRODUCT_CODES;
+      if (previousApproval == null)
+        delete process.env.MAPPING_APPROVED_PRODUCT_CODES;
       else process.env.MAPPING_APPROVED_PRODUCT_CODES = previousApproval;
     }
   });
@@ -526,7 +803,7 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
   });
 
   it("membuat janji tanpa referensi manual, mengingatkan beberapa PIC, memetakan, dan soft-delete", async () => {
-    const appointment = await createAppointment(actorA, {
+    let appointment = await createAppointment(actorA, {
       acquisitionCategory: "LIVIN_MERCHANT",
       acquisitionProduct: "LIVIN_MERCHANT_QRIS",
       acquisitionStatus: "PROSPECT",
@@ -541,7 +818,7 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
       businessAlias: "Toko Janji Multipic",
       reason: "Pertemuan kebutuhan transaksi usaha samaran",
       picIds: [actorA.id, actorB.id],
-      appointmentAt: new Date(Date.now() + 86_400_000),
+      appointmentAt: new Date(Date.now() + 2 * 86_400_000),
       locationLabel: "Ruko samaran pintu kiri",
       latitude: -6.1451,
       longitude: 106.8179,
@@ -550,7 +827,20 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     });
     caseIds.push(appointment.id);
     createdProspectIds.push(appointment.prospectId);
-    expect((await db.prospect.findUniqueOrThrow({ where: { id: appointment.prospectId } })).mappingMarkerIcon).toBe("TOWER");
+    expect(
+      await db.outboxJob.count({ where: { serviceCaseId: appointment.id } }),
+    ).toBe(0);
+    appointment = await updateServiceCase(actorA, appointment.id, {
+      version: appointment.version,
+      status: "ACCEPTED",
+    });
+    expect(
+      (
+        await db.prospect.findUniqueOrThrow({
+          where: { id: appointment.prospectId },
+        })
+      ).mappingMarkerIcon,
+    ).toBe("TOWER");
     expect(
       await db.serviceCaseParticipant.count({
         where: { serviceCaseId: appointment.id },
@@ -563,7 +853,7 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
           status: OutboxStatus.PENDING,
         },
       }),
-    ).toBe(14);
+    ).toBe(6);
     expect((await getServiceCase(actorB, appointment.id)).id).toBe(
       appointment.id,
     );
@@ -595,6 +885,65 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
         },
       }),
     ).not.toBeNull();
+  });
+
+  it("waktu follow-up belum menjadi janji terkonfirmasi sampai status dikonfirmasi", async () => {
+    const time = new Date(Date.now() + 86_400_000);
+    const appointment = await createAppointment(actorA, {
+      acquisitionCategory: "LIVIN_MERCHANT",
+      acquisitionProduct: "LIVIN_MERCHANT_QRIS",
+      acquisitionStatus: "PROSPECT",
+      customerCif: null,
+      customerAccount: null,
+      customerPhone: null,
+      nextAction: "Hubungi untuk membuat janji",
+      targetValue: null,
+      realizationValue: null,
+      metricUnit: null,
+      contactName: "Kontak Samaran",
+      businessAlias: "Toko Follow-up Samaran",
+      reason: "Konfirmasi agenda discovery transaksi usaha",
+      picIds: [actorA.id],
+      appointmentStatus: "NEEDS_SCHEDULING",
+      appointmentAt: time,
+      locationLabel: "Titik Samaran",
+      latitude: -6.1451,
+      longitude: 106.8179,
+      locationSource: "MANUAL_COORDINATES",
+      mappingMarkerIcon: "STORE",
+    });
+    caseIds.push(appointment.id);
+    createdProspectIds.push(appointment.prospectId);
+    expect(appointment.appointmentStatus).toBe("NEEDS_SCHEDULING");
+    expect(appointment.appointmentAt).toEqual(time);
+    expect(appointment.dueAt).toEqual(time);
+    // A tentative time is not confirmation and does not produce an appointment alarm.
+    expect(
+      await db.outboxJob.count({ where: { serviceCaseId: appointment.id } }),
+    ).toBe(0);
+    const confirmed = await updateServiceCase(actorA, appointment.id, {
+      version: appointment.version,
+      status: "ACCEPTED",
+    });
+    expect(confirmed.appointmentAt).toEqual(time);
+    expect(
+      await db.outboxJob.count({
+        where: {
+          serviceCaseId: appointment.id,
+          scheduleVersion: appointment.version,
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await db.outboxJob.count({
+        where: {
+          serviceCaseId: appointment.id,
+          scheduleVersion: confirmed.version,
+          type: "APPOINTMENT_PRE_DUE",
+          status: "PENDING",
+        },
+      }),
+    ).toBeGreaterThan(0);
   });
 
   it("reschedule, pergantian PIC, konfirmasi, dan selesai membatalkan reminder lama", async () => {
@@ -637,7 +986,7 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     const confirmed = await updateServiceCase(actorB, item.id, {
       version: changed.version,
       appointmentStatus: AppointmentStatus.CONFIRMED,
-      appointmentAt: new Date(Date.now() + 86_400_000),
+      appointmentAt: new Date(Date.now() + 2 * 86_400_000),
     });
     expect(confirmed.appointmentStatus).toBe(AppointmentStatus.CONFIRMED);
     const confirmedJobs = await db.outboxJob.findMany({
@@ -648,7 +997,7 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
       },
       orderBy: { runAt: "asc" },
     });
-    expect(confirmedJobs).toHaveLength(7);
+    expect(confirmedJobs).toHaveLength(3);
     expect(confirmedJobs.every((job) => job.recipientId === actorB.id)).toBe(
       true,
     );
@@ -661,18 +1010,10 @@ describe("operasional ServiceCase, lokasi, dan storage privat", () => {
     const preJobs = confirmedJobs.filter(
       (job) => job.type === OutboxJobType.APPOINTMENT_PRE_DUE,
     );
-    expect(preJobs).toHaveLength(6);
-    expect(
-      preJobs
-        .slice(1)
-        .every(
-          (job, index) =>
-            job.runAt.getTime() - preJobs[index].runAt.getTime() === 5 * 60_000,
-        ),
-    ).toBe(true);
-    expect(dueJob?.runAt.getTime()).toBe(confirmed.appointmentAt?.getTime());
+    expect(preJobs).toHaveLength(2);
+    expect(dueJob?.runAt).toEqual(confirmed.appointmentAt);
     expect(preJob?.runAt.getTime()).toBe(
-      (confirmed.appointmentAt?.getTime() ?? 0) - 30 * 60_000,
+      (confirmed.appointmentAt?.getTime() ?? 0) - 1440 * 60_000,
     );
     const accepted = await updateServiceCase(actorB, item.id, {
       version: confirmed.version,

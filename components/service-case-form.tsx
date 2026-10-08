@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- preview file lokal tidak dikirim ke image optimizer */
 
 import dynamic from "next/dynamic";
-import { Camera, LocateFixed, MapPin, Plus, Search } from "lucide-react";
+import { Camera, LocateFixed, MapPin, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
@@ -16,6 +16,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose } from "@/components/ui/dialog";
 import { useFeedback } from "@/components/ui/feedback";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { MarkerIconPicker } from "@/components/marker-icon-picker";
 import { ApiRequestError, clientApi } from "@/lib/client-api";
 import { useDebouncedValue } from "@/lib/client/use-debounced-value";
@@ -61,10 +63,12 @@ export function ServiceCaseForm({
   officers,
   savedLocations,
   currentUserId,
+  currentBranchId,
 }: {
   officers: OfficerOption[];
   savedLocations: SavedLocation[];
   currentUserId: string;
+  currentBranchId?: string | null;
 }) {
   const router = useRouter();
   const { toast } = useFeedback();
@@ -73,6 +77,7 @@ export function ServiceCaseForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedPicIds, setSelectedPicIds] = useState<string[]>([]);
+  const [appointmentStatus, setAppointmentStatus] = useState("CONFIRMED");
   const [categoryId, setCategoryId] = useState("");
   const [productId, setProductId] = useState("");
   const [productSearch, setProductSearch] = useState("");
@@ -85,6 +90,7 @@ export function ServiceCaseForm({
   const [latitudeInput, setLatitudeInput] = useState("");
   const [longitudeInput, setLongitudeInput] = useState("");
   const [point, setPoint] = useState<Point | null>(null);
+  const [locationVerified, setLocationVerified] = useState(false);
   const [locationSource, setLocationSource] = useState<
     "MAP_PIN" | "MANUAL_COORDINATES" | "DEVICE_GEOLOCATION"
   >("MAP_PIN");
@@ -92,9 +98,9 @@ export function ServiceCaseForm({
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
 
-  const selectedBranchId = officers.find((item) =>
-    selectedPicIds.includes(item.id),
-  )?.branchId;
+  const selectedBranchId =
+    currentBranchId ??
+    officers.find((item) => item.id === currentUserId)?.branchId;
   const visibleOfficers = selectedBranchId
     ? officers.filter((officer) => officer.branchId === selectedBranchId)
     : officers;
@@ -139,6 +145,7 @@ export function ServiceCaseForm({
     source: "MAP_PIN" | "MANUAL_COORDINATES" | "DEVICE_GEOLOCATION",
   ) => {
     setPoint(next);
+    setLocationVerified(false);
     setLatitudeInput(next.latitude.toFixed(7));
     setLongitudeInput(next.longitude.toFixed(7));
     setLocationSource(source);
@@ -223,18 +230,8 @@ export function ServiceCaseForm({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    if (!selectedPicIds.length) {
-      setError("Pilih minimal satu PIC internal.");
-      return;
-    }
     if (!selectedProduct) {
       setError("Pilih kategori dan produk/layanan akuisisi.");
-      return;
-    }
-    if (!point) {
-      setError(
-        "Pilih titik pada peta, lokasi tersimpan, atau isi koordinat manual.",
-      );
       return;
     }
     setBusy(true);
@@ -260,14 +257,18 @@ export function ServiceCaseForm({
             customerPhone: form.get("customerPhone") || null,
             reason: form.get("reason"),
             nextAction: form.get("nextAction"),
-            picIds: selectedPicIds,
-            appointmentAt: jakartaLocalToIso(String(form.get("appointmentAt"))),
+            companionIds: selectedPicIds,
+            appointmentStatus: form.get("appointmentStatus"),
+            appointmentAt: form.get("appointmentAt")
+              ? jakartaLocalToIso(String(form.get("appointmentAt")))
+              : null,
+            locationVerified,
             targetValue: numberOrNull("targetValue"),
             realizationValue: numberOrNull("realizationValue"),
             metricUnit: form.get("metricUnit") || null,
             locationLabel,
-            latitude: point.latitude,
-            longitude: point.longitude,
+            latitude: point?.latitude ?? null,
+            longitude: point?.longitude ?? null,
             locationSource,
             mappingMarkerIcon: markerIcon,
           }),
@@ -291,7 +292,7 @@ export function ServiceCaseForm({
       toast(
         photoFailed
           ? "Janji tersimpan, tetapi foto gagal diunggah. Foto dapat ditambahkan dari Mapping."
-          : "Janji tersimpan dan reminder dibuat untuk seluruh PIC.",
+          : "Janji tersimpan. Kendali layanan ada pada Anda; pengingat mengikuti status dan waktu janji.",
         photoFailed ? "error" : "success",
       );
       router.push(`/work/${item.id}`);
@@ -303,7 +304,15 @@ export function ServiceCaseForm({
       toast(message, "error");
       if (reason instanceof ApiRequestError && reason.field) {
         const field = reason.field;
-        window.setTimeout(() => document.querySelector<HTMLElement>(`#service-case-form [name="${field}"], #service-case-form [data-field="${field}"]`)?.focus(), 0);
+        window.setTimeout(
+          () =>
+            document
+              .querySelector<HTMLElement>(
+                `#service-case-form [name="${field}"], #service-case-form [data-field="${field}"]`,
+              )
+              ?.focus(),
+          0,
+        );
       }
     } finally {
       setBusy(false);
@@ -311,8 +320,8 @@ export function ServiceCaseForm({
   }
 
   const resetAndOpen = () => {
-    const ownOfficer = officers.some((officer) => officer.id === currentUserId);
-    setSelectedPicIds(ownOfficer ? [currentUserId] : []);
+    setSelectedPicIds([]);
+    setAppointmentStatus("CONFIRMED");
     setCategoryId("");
     setProductId("");
     setProductSearch("");
@@ -323,6 +332,7 @@ export function ServiceCaseForm({
     setLatitudeInput("");
     setLongitudeInput("");
     setPoint(null);
+    setLocationVerified(false);
     setPhoto(null);
     setPreview(null);
     setGeoMessage("");
@@ -333,14 +343,14 @@ export function ServiceCaseForm({
 
   return (
     <>
-      <Button onClick={resetAndOpen} disabled={!officers.length}>
+      <Button onClick={resetAndOpen}>
         <Plus size={16} /> Buat janji
       </Button>
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
         title="Buat janji akuisisi"
-        description="Isi jadwal, PIC internal, dan lokasi. Kode pekerjaan dibuat otomatis."
+        description="Anda otomatis memegang kendali layanan. Anggota pendamping opsional."
         dirty={dirty}
         busy={busy}
         className="max-w-4xl"
@@ -352,9 +362,7 @@ export function ServiceCaseForm({
             <Button
               type="submit"
               form="service-case-form"
-              disabled={
-                busy || !point || !selectedPicIds.length || !selectedProduct
-              }
+              disabled={busy || !selectedProduct}
             >
               {busy ? "Menyimpan…" : "Simpan janji"}
             </Button>
@@ -380,44 +388,31 @@ export function ServiceCaseForm({
                 produk tetap ringkas.
               </p>
             </div>
-            <div className="relative">
-              <label htmlFor="acquisition-product-search" className="mb-1 block text-xs font-bold text-slate-700">Cari produk dalam katalog</label>
-              <Search
-                className="pointer-events-none absolute left-3 top-[34px] text-slate-400"
-                size={17}
-              />
-              <input
-                id="acquisition-product-search"
-                className="field pl-10"
-                value={productSearch}
-                onChange={(event) => setProductSearch(event.target.value)}
-                placeholder="Cari QRIS, Kopra, KPR, Tabungan…"
-                aria-label="Cari produk akuisisi"
-              />
-              {productSearch.trim().length >= 2 && !productMatches.length && <p className="mt-1 text-xs text-slate-500">Tidak ada produk yang cocok. Coba kata lain atau pilih kategori di bawah.</p>}
-              {productMatches.length ? (
-                <div className="absolute z-[1200] mt-1 max-h-72 w-full overflow-y-auto rounded-xl border bg-white shadow-xl">
-                  {productMatches.map(({ category, product }) => (
-                    <button
-                      key={`${category.id}:${product.id}`}
-                      type="button"
-                      className="block min-h-12 w-full border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-blue-50"
-                      onClick={() => {
-                        setCategoryId(category.id);
-                        setProductId(product.id);
-                        setProductSearch("");
-                        setDirty(true);
-                      }}
-                    >
-                      <strong>{product.label}</strong>
-                      <span className="block text-xs text-slate-500">
-                        {category.label}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <SearchCombobox
+              id="acquisition-product-search"
+              label="Cari produk akuisisi"
+              placeholder="Cari QRIS, Kopra, KPR, Tabungan…"
+              value={productSearch}
+              onChange={setProductSearch}
+              loading={productSearch !== debouncedProductSearch}
+              empty="Tidak ada produk yang cocok. Coba kata lain atau pilih kategori di bawah."
+              options={productMatches.map(({ category, product }) => ({
+                id: `${category.id}:${product.id}`,
+                label: product.label,
+                detail: category.label,
+              }))}
+              onSelect={(option) => {
+                const match = productMatches.find(
+                  ({ category, product }) =>
+                    `${category.id}:${product.id}` === option.id,
+                );
+                if (!match) return;
+                setCategoryId(match.category.id);
+                setProductId(match.product.id);
+                setProductSearch("");
+                setDirty(true);
+              }}
+            />
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="label">
                 Kategori
@@ -561,13 +556,35 @@ export function ServiceCaseForm({
                 placeholder="Contoh: konfirmasi kebutuhan dan dokumen melalui prosedur resmi"
               />
             </label>
+            <label className="label" htmlFor="appointment-status">
+              Status janji
+              <InfoTooltip label="status janji">
+                Pilih Terkonfirmasi hanya setelah waktu disepakati. Pengingat 24
+                jam dan 15 menit/1 jam hanya dibuat untuk janji terkonfirmasi
+                yang masih akan datang.
+              </InfoTooltip>
+              <select
+                id="appointment-status"
+                aria-label="Status janji"
+                name="appointmentStatus"
+                className="field mt-1"
+                value={appointmentStatus}
+                onChange={(event) => setAppointmentStatus(event.target.value)}
+              >
+                <option value="NEEDS_SCHEDULING">Perlu membuat janji</option>
+                <option value="PENDING_CONFIRMATION">
+                  Menunggu konfirmasi
+                </option>
+                <option value="CONFIRMED">Terkonfirmasi</option>
+              </select>
+            </label>
             <label className="label">
-              Tanggal follow up / waktu janji (WIB)
+              Waktu janji (WIB)
               <input
                 name="appointmentAt"
                 type="datetime-local"
                 className="field mt-1"
-                required
+                required={appointmentStatus === "CONFIRMED"}
               />
             </label>
             <label className="label">
@@ -609,36 +626,52 @@ export function ServiceCaseForm({
 
           <fieldset className="rounded-2xl border p-4">
             <legend className="px-2 text-sm font-black">
-              PIC internal (dapat lebih dari satu)
+              Anggota pendamping/pengganti (opsional)
             </legend>
             <p className="mb-3 text-xs text-slate-500">
-              PIC pertama menjadi penanggung jawab utama. Setelah memilih satu
-              PIC, pilihan dibatasi pada cabang yang sama.
+              Kendali layanan otomatis pada pembuat janji. Anggota cabang yang
+              dipilih dapat membantu atau mengambil alih secara eksplisit; tidak
+              otomatis menjadi pemilik.
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
-              {visibleOfficers.map((officer) => (
-                <label
-                  key={officer.id}
-                  className="flex min-h-12 items-center gap-3 rounded-xl border px-3 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedPicIds.includes(officer.id)}
-                    onChange={() => togglePic(officer.id)}
-                  />
-                  <span>
-                    <strong>{officer.name}</strong>
-                    <span className="block text-xs text-slate-500">
-                      {officer.role === "OUT_BRANCH" ? "OUTBRANCH" : "CS"}
-                      {officer.branchCode ? ` · ${officer.branchCode}` : ""}
+              {visibleOfficers
+                .filter((officer) => officer.id !== currentUserId)
+                .map((officer) => (
+                  <label
+                    key={officer.id}
+                    className="flex min-h-12 items-center gap-3 rounded-xl border px-3 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedPicIds.includes(officer.id)}
+                      onChange={() => togglePic(officer.id)}
+                    />
+                    <span>
+                      <strong>{officer.name}</strong>
+                      <span className="block text-xs text-slate-500">
+                        {officer.role === "OUT_BRANCH" ? "OUTBRANCH" : "CS"}
+                        {officer.branchCode ? ` · ${officer.branchCode}` : ""}
+                      </span>
                     </span>
-                  </span>
-                </label>
-              ))}
+                  </label>
+                ))}
             </div>
           </fieldset>
 
           <section className="space-y-4 rounded-2xl border p-4">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="locationVerified"
+                checked={locationVerified}
+                onChange={(event) => setLocationVerified(event.target.checked)}
+                disabled={!point}
+                className="mt-1"
+              />
+              Saya telah memverifikasi koordinat usaha ini (bukan sekadar pin
+              perkiraan). Tanpa lokasi terverifikasi, digunakan pengingat
+              cadangan 1 jam.
+            </label>
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div>
                 <h3 className="flex items-center gap-2 font-black">
@@ -658,50 +691,36 @@ export function ServiceCaseForm({
               </Button>
             </div>
 
-            <div className="relative">
-              <label htmlFor="appointment-location-search" className="mb-1 block text-xs font-bold text-slate-700">Cari titik yang sudah tersimpan</label>
-              <Search
-                className="pointer-events-none absolute left-3 top-[34px] text-slate-400"
-                size={17}
-              />
-              <input
-                id="appointment-location-search"
-                className="field pl-10"
-                value={locationSearch}
-                onChange={(event) => setLocationSearch(event.target.value)}
-                placeholder="Nama toko, label lokasi, atau area…"
-                aria-label="Cari lokasi janji tersimpan"
-              />
-              {locationSearch.trim().length >= 2 && !locationMatches.length && <p className="mt-1 text-xs text-slate-500">Titik tersimpan tidak ditemukan. Pilih pin atau isi koordinat manual.</p>}
-              {locationMatches.length ? (
-                <div className="absolute z-[1200] mt-1 w-full overflow-hidden rounded-xl border bg-white shadow-xl">
-                  {locationMatches.map((location) => (
-                    <button
-                      key={location.id}
-                      type="button"
-                      className="block min-h-12 w-full border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-blue-50"
-                      onClick={() => {
-                        setMapPoint(
-                          {
-                            latitude: location.latitude,
-                            longitude: location.longitude,
-                          },
-                          "MAP_PIN",
-                        );
-                        setLocationLabel(location.label);
-                        setMarkerIcon(location.mappingMarkerIcon);
-                        setLocationSearch("");
-                      }}
-                    >
-                      <strong>{location.label}</strong>
-                      <span className="block text-xs text-slate-500">
-                        {location.detail}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <SearchCombobox
+              id="appointment-location-search"
+              label="Cari lokasi janji tersimpan"
+              placeholder="Nama toko, label lokasi, atau area…"
+              value={locationSearch}
+              onChange={setLocationSearch}
+              loading={locationSearch !== debouncedLocationSearch}
+              empty="Titik tersimpan tidak ditemukan. Pilih pin atau isi koordinat manual."
+              options={locationMatches.map((location) => ({
+                id: location.id,
+                label: location.label,
+                detail: location.detail,
+              }))}
+              onSelect={(option) => {
+                const location = locationMatches.find(
+                  (item) => item.id === option.id,
+                );
+                if (!location) return;
+                setMapPoint(
+                  {
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                  },
+                  "MAP_PIN",
+                );
+                setLocationLabel(location.label);
+                setMarkerIcon(location.mappingMarkerIcon);
+                setLocationSearch("");
+              }}
+            />
 
             <AppointmentLocationMap
               point={point}
@@ -712,9 +731,16 @@ export function ServiceCaseForm({
             />
 
             <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-              <label className="label">
+              <label className="label" htmlFor="appointment-latitude">
                 Latitude
+                <InfoTooltip label="koordinat tujuan">
+                  Opsional. Latitude −90 sampai 90 dan longitude −180 sampai 180
+                  harus diisi berpasangan. Pin adalah lokasi tujuan, bukan
+                  pelacakan petugas.
+                </InfoTooltip>
                 <input
+                  id="appointment-latitude"
+                  aria-label="Latitude"
                   className="field mt-1"
                   inputMode="decimal"
                   value={latitudeInput}
@@ -748,7 +774,6 @@ export function ServiceCaseForm({
                 onChange={(event) => setLocationLabel(event.target.value)}
                 minLength={2}
                 maxLength={120}
-                required
                 placeholder="Contoh: Ruko lantai 1, pintu kanan"
               />
             </label>
@@ -768,7 +793,14 @@ export function ServiceCaseForm({
             ) : null}
           </section>
 
-          <MarkerIconPicker value={markerIcon} onChange={(next) => { setMarkerIcon(next); setDirty(true); }} label="Ikon titik janji di peta" />
+          <MarkerIconPicker
+            value={markerIcon}
+            onChange={(next) => {
+              setMarkerIcon(next);
+              setDirty(true);
+            }}
+            label="Ikon titik janji di peta"
+          />
 
           <section className="rounded-2xl border p-4">
             <h3 className="flex items-center gap-2 font-black">

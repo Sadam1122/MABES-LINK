@@ -44,7 +44,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           </div>;
         })}
       </div>
-      <Dialog open={Boolean(question)} onClose={() => answer(false)} title={question?.title ?? "Konfirmasi"} description={question?.description} className="max-w-md" footer={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button variant="outline" onClick={() => answer(false)}>Batal</Button><Button variant={question?.tone === "danger" ? "danger" : "default"} onClick={() => answer(true)} data-autofocus>{question?.confirmLabel ?? "Konfirmasi"}</Button></div>}>
+      <Dialog open={Boolean(question)} onClose={() => answer(false)} title={question?.title ?? "Konfirmasi"} description={question?.description} className="max-w-md" footer={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button variant="outline" onClick={() => answer(false)} data-autofocus>Batal</Button><Button variant={question?.tone === "danger" ? "danger" : "default"} onClick={() => answer(true)}>{question?.confirmLabel ?? "Konfirmasi"}</Button></div>}>
         <p className="text-sm text-slate-600">Tindakan hanya dijalankan setelah Anda mengonfirmasi.</p>
       </Dialog>
     </FeedbackContext.Provider>

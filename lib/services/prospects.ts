@@ -155,6 +155,7 @@ export async function createProspect(
         productNeeds: input.productNeeds,
         locationLabel: input.locationLabel,
         locationSource: input.locationSource,
+        locationVerifiedAt: input.latitude !== undefined || input.longitude !== undefined ? null : undefined,
         locationUpdatedAt:
           input.latitude !== undefined ||
           input.longitude !== undefined ||
@@ -252,6 +253,7 @@ export async function updateProspect(
         productNeeds: input.productNeeds,
         locationLabel: input.locationLabel,
         locationSource: input.locationSource,
+        locationVerifiedAt: input.latitude !== undefined || input.longitude !== undefined ? null : undefined,
         locationUpdatedAt:
           input.latitude !== undefined ||
           input.longitude !== undefined ||
